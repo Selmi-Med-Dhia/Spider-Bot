@@ -60,7 +60,7 @@ Preferences preferences;
 
 JointConfig jointConfig[JOINT_COUNT];
 float jointAngles[JOINT_COUNT];
-bool outputsEnabled = true;
+bool outputsEnabled = false;
 MotionMode motionMode = MotionMode::Stop;
 uint8_t gaitSpeed = 55;
 uint32_t motionStartedAt = 0;
@@ -99,8 +99,8 @@ bool configLooksValid(const JointConfig& config) {
          config.minAngle >= 0.0f &&
          config.maxAngle <= 180.0f &&
          config.minAngle < config.maxAngle &&
-         config.centerAngle >= config.minAngle &&
-         config.centerAngle <= config.maxAngle &&
+         config.centerAngle > config.minAngle &&
+         config.centerAngle < config.maxAngle &&
          (config.direction == 1 || config.direction == -1);
 }
 

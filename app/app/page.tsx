@@ -395,8 +395,9 @@ export default function Home() {
   const [connectionDetail, setConnectionDetail] = useState('ESP32 not connected');
   const [motion, setMotion] = useState<MotionCommand>('stop');
   const [gaitSpeed, setGaitSpeed] = useState(55);
-  const [outputsEnabled, setOutputsEnabled] = useState(true);
+  const [outputsEnabled, setOutputsEnabled] = useState(false);
   const [notice, setNotice] = useState('Connect to the ESP32, calibrate one joint at a time, then test walking.');
+  const [httpsWarning, setHttpsWarning] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
 
   const selectedMeta = useMemo(
@@ -407,6 +408,7 @@ export default function Home() {
   const selectedBounds = logicalBounds(selectedConfig);
 
   useEffect(() => {
+    setHttpsWarning(window.location.protocol === 'https:');
     const savedEndpoint = window.localStorage.getItem('spiderbot.endpoint');
     if (savedEndpoint) setEndpoint(savedEndpoint);
 
@@ -585,8 +587,8 @@ export default function Home() {
       config.min < 0 ||
       config.max > 180 ||
       config.min >= config.max ||
-      config.center < config.min ||
-      config.center > config.max
+      config.center <= config.min ||
+      config.center >= config.max
     ) {
       setNotice('Invalid servo configuration. Channel must be -1..15 and min < center < max within 0..180°.');
       return;
@@ -643,7 +645,6 @@ export default function Home() {
     send({ type: 'motion', command: 'stop' });
   };
 
-  const httpsWarning = typeof window !== 'undefined' && window.location.protocol === 'https:';
 
   return (
     <main className="studio">
@@ -793,7 +794,7 @@ export default function Home() {
                 onPointerDown={() => setMotionCommand('forward')}
                 onPointerUp={() => setMotionCommand('stop')}
                 onPointerCancel={() => setMotionCommand('stop')}
-                onPointerLeave={() => motion === 'forward' && setMotionCommand('stop')}
+                onPointerLeave={() => setMotionCommand('stop')}
               ><ArrowUp /></button>
               <span />
               <button
@@ -801,7 +802,7 @@ export default function Home() {
                 onPointerDown={() => setMotionCommand('left')}
                 onPointerUp={() => setMotionCommand('stop')}
                 onPointerCancel={() => setMotionCommand('stop')}
-                onPointerLeave={() => motion === 'left' && setMotionCommand('stop')}
+                onPointerLeave={() => setMotionCommand('stop')}
               ><ArrowLeft /></button>
               <button className="stop-button" aria-label="Stop" onClick={() => setMotionCommand('stop')}><CircleStop /></button>
               <button
@@ -809,7 +810,7 @@ export default function Home() {
                 onPointerDown={() => setMotionCommand('right')}
                 onPointerUp={() => setMotionCommand('stop')}
                 onPointerCancel={() => setMotionCommand('stop')}
-                onPointerLeave={() => motion === 'right' && setMotionCommand('stop')}
+                onPointerLeave={() => setMotionCommand('stop')}
               ><ArrowRight /></button>
               <span />
               <button
@@ -817,7 +818,7 @@ export default function Home() {
                 onPointerDown={() => setMotionCommand('backward')}
                 onPointerUp={() => setMotionCommand('stop')}
                 onPointerCancel={() => setMotionCommand('stop')}
-                onPointerLeave={() => motion === 'backward' && setMotionCommand('stop')}
+                onPointerLeave={() => setMotionCommand('stop')}
               ><ArrowDown /></button>
               <span />
             </div>
