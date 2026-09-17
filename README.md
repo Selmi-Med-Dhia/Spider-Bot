@@ -1,61 +1,51 @@
-# Spiderbot Studio
+# SpiderBot
 
-Interactive 3D quadruped configurator built with React, Three.js and Vinext.
+This branch is organized as two independent projects:
 
-## Run locally (Windows, macOS or Linux)
+- app/ — the existing Next.js 3D SpiderBot studio, extended with ESP32 hardware control
+- firmware/ — a PlatformIO ESP32 controller for twelve servos through a PCA9685
 
-1. Install Node.js 22.13 or newer (Node.js 24 LTS is suitable).
-2. Extract this ZIP.
-3. Open a terminal in the extracted `spiderbot-studio` folder.
-4. Install dependencies:
+## What is implemented
 
-   npx pnpm@11.25.0 install --frozen-lockfile
+The app and robot share the same twelve logical joints: FL, FR, RL and RR, each with yaw, hip and knee.
 
-5. Start the app:
+From the app you can:
 
-   npx pnpm@11.25.0 dev
+- connect directly to the ESP32 over WebSocket
+- move any joint to a logical angle and see the 3D robot update
+- assign each logical joint to PCA9685 servo channel 0–15
+- leave a joint unassigned with channel -1
+- set physical servo minimum, center and maximum angles
+- reverse individual servo directions
+- persist configuration in ESP32 flash
+- enable or disable servo outputs
+- change gait speed
+- hold buttons for forward, backward, rotate left and rotate right
+- receive live joint state from the ESP32 so the simulation follows the real gait
 
-6. Open http://localhost:5173 in your browser (or the address printed in the terminal).
+## Run the web app
 
-Internet access is needed for the initial dependency installation. Dependencies
-and generated build files are intentionally not included in this source ZIP.
-No API key, account or cloud deployment is needed to run the app locally.
+From app/:
 
-## Controls
+1. Install dependencies with pnpm install
+2. Start development mode with pnpm dev
+3. Open the local HTTP address printed by Next.js
 
-- Drag the scene to orbit; scroll to zoom; right-drag to pan.
-- Use Perspective, Top, Front and Side for preset views.
-- Geometry adjusts body dimensions, leg lengths and attachment offsets.
-- Joint angles adjusts yaw, elbow and knee angles.
-- All legs edits every leg; FL, FR, RL and RR edit individual legs.
-- The final segment is constrained to remain longer than the first two.
-- Reset model restores the default geometry and camera.
+Direct ws:// access to an ESP32 can be blocked by browsers when the web page itself is loaded over HTTPS, so local HTTP is the recommended control mode.
 
-The vertical axis is Y. Lengths are in millimeters and angles in degrees.
-Yaw rotates around the vertical axis. Elbow and knee angles are relative to
-the previous segment and bend in the leg's vertical plane.
-This is a geometry/kinematics viewer; it does not simulate collisions,
-ground contact, balance or motor torque.
+## Flash the ESP32
 
-## Project files
+From firmware/:
 
-- app/page.tsx: 3D model, articulation, sidebar controls and camera.
-- app/globals.css: application styling and responsive layout.
-- app/layout.tsx: page metadata.
-- public/favicon.svg: application icon.
-- components/ui/: reusable UI components.
-- pnpm-lock.yaml: pinned dependency resolution.
+1. Install PlatformIO
+2. Connect the ESP32
+3. Run pio run -t upload
+4. Optionally run pio device monitor
 
-Three.js uses WebGL when available, with an SVG-based 3D fallback when
-WebGL is unavailable. The fallback can show simpler shading and overlap
-artifacts; WebGL provides the full rendering quality.
+The ESP32 creates a SpiderBot Wi-Fi access point with password spiderbot. Connect the computer to it, then use 192.168.4.1:81 in the app.
 
-## Build
+See firmware/README.md for wiring and the calibration sequence.
 
-   npx pnpm@11.25.0 build
+## Safety
 
-The included build setup targets the original Cloudflare/Vinext environment.
-For local interactive use, use the development command above.
-
-The hosted site's identity, credentials, Git history and local runtime caches
-are excluded. The hosting configuration is reset for standalone use.
+Calibrate with the robot lifted. Start with conservative servo bounds. Use a properly sized external servo power supply with common ground. The movement gait is an open-loop baseline and must be validated on the actual mechanical build before unattended use.
