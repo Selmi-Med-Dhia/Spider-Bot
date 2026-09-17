@@ -514,7 +514,7 @@ export default function Home() {
         } else if (message.type === 'status') {
           if (typeof message.motion === 'string') setMotion(message.motion as MotionCommand);
           if (typeof message.outputsEnabled === 'boolean') setOutputsEnabled(message.outputsEnabled);
-          if (message.ip) setConnectionDetail('ESP32 ' + message.ip + ' · AP ' + (message.apIp || '192.168.4.1'));
+          if (message.ip || message.apIp) setConnectionDetail('ESP32 ' + (message.ip || message.apIp) + ' · AP ' + (message.apIp || '192.168.4.1'));
         } else if (message.type === 'error') {
           setNotice('ESP32: ' + String(message.message || 'command rejected'));
         } else if (message.type === 'ack' && message.message) {
@@ -539,7 +539,7 @@ export default function Home() {
   useEffect(() => disconnect, [disconnect]);
 
   useEffect(() => {
-    if (motion === 'stop') return;
+    if (motion === 'stop' || connection === 'connected') return;
     const started = performance.now();
     let frame = 0;
     let lastUpdate = 0;
@@ -555,7 +555,7 @@ export default function Home() {
 
     frame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frame);
-  }, [gaitSpeed, motion]);
+  }, [connection, gaitSpeed, motion]);
 
   const updateGeometry = (key: keyof Geometry, value: number) => {
     setGeometry((current) => ({ ...current, [key]: value }));
