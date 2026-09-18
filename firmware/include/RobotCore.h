@@ -237,6 +237,20 @@ struct Controller {
     targets[i] = clamp(angle, config.servos[i].min, config.servos[i].max);
     return true;
   }
+  // Apply all 16 physical servo targets as one validated checkpoint.
+  // Validate every angle first so a bad checkpoint can never partially update.
+  bool servoPose(const float *p) {
+    if (!p)
+      return false;
+    for (int i = 0; i < Channels; i++)
+      if (!range(p[i], 0, 180) || p[i] < config.servos[i].min ||
+          p[i] > config.servos[i].max)
+        return false;
+    direction = -1;
+    for (int i = 0; i < Channels; i++)
+      targets[i] = p[i];
+    return true;
+  }
   bool joint(int j, float a) {
     if (j < 0 || j >= Joints || !range(a, -180, 180))
       return false;
