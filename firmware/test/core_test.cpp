@@ -47,6 +47,19 @@ int main() {
   r.tick(120, .02);
   assert(std::abs(r.angles[0] - 91.8) < .01);
   assert(std::abs(r.angles[1] - 91.8) < .01);
+  float savedPose[16];
+  for (int i = 0; i < 16; i++)
+    savedPose[i] = 80.f + i;
+  assert(r.servoPose(savedPose));
+  for (int i = 0; i < 16; i++)
+    assert(std::abs(r.targets[i] - savedPose[i]) < .001);
+  float beforeInvalid[16];
+  for (int i = 0; i < 16; i++)
+    beforeInvalid[i] = r.targets[i];
+  savedPose[7] = 181;
+  assert(!r.servoPose(savedPose));
+  for (int i = 0; i < 16; i++)
+    assert(std::abs(r.targets[i] - beforeInvalid[i]) < .001);
   assert(r.arm(0, 100));
   r.disarm();
   assert(r.armed);
