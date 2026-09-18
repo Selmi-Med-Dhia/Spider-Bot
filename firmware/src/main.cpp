@@ -182,6 +182,21 @@ void handleMessage(uint8_t *data, size_t size) {
   } else if (type == "servo") {
     if (doc["channel"].is<int>() && doc["angle"].is<float>())
       ok = robot.servo(doc["channel"], doc["angle"]);
+  } else if (type == "pose") {
+    JsonArrayConst values = doc["angles"].as<JsonArrayConst>();
+    if (!values.isNull() && values.size() == 16) {
+      float pose[16];
+      bool valid = true;
+      for (int i = 0; i < 16; i++) {
+        if (!values[i].is<float>()) {
+          valid = false;
+          break;
+        }
+        pose[i] = values[i].as<float>();
+      }
+      if (valid)
+        ok = robot.servoPose(pose);
+    }
   } else if (type == "joint") {
     if (doc["joint"].is<int>() && doc["angle"].is<float>())
       ok = robot.joint(doc["joint"], doc["angle"]);
