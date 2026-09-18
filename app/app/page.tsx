@@ -57,10 +57,12 @@ type ServoConfig = {
   max: number;
   center: number;
   direction: 1 | -1;
+  joint: JointKey | null;
+  physicalAngle: number;
 };
 
 type JointAngles = Record<JointKey, number>;
-type ServoConfigs = Record<JointKey, ServoConfig>;
+type ServoConfigs = ServoConfig[];
 
 const INITIAL_GEOMETRY: Geometry = {
   width: 150,
@@ -88,13 +90,18 @@ function makeInitialAngles(): JointAngles {
 }
 
 function makeInitialServoConfig(): ServoConfigs {
-  return makeRecord((_key, index, part) => ({
-    channel: index,
-    min: 10,
-    max: 170,
-    center: part === 'knee' ? 135 : 90,
-    direction: 1,
-  }));
+  return Array.from({ length: 16 }, (_, channel) => {
+    const assigned = JOINT_META[channel] ?? null;
+    return {
+      channel,
+      min: 10,
+      max: 170,
+      center: assigned?.part === 'knee' ? 135 : 90,
+      direction: 1 as const,
+      joint: assigned?.key ?? null,
+      physicalAngle: assigned?.part === 'knee' ? 135 : 90,
+    };
+  });
 }
 
 function normalizeWebSocketUrl(value: string) {
@@ -390,6 +397,7 @@ export default function Home() {
   const [angles, setAngles] = useState<JointAngles>(makeInitialAngles);
   const [servoConfigs, setServoConfigs] = useState<ServoConfigs>(makeInitialServoConfig);
   const [selectedJoint, setSelectedJoint] = useState<JointKey>('FL_YAW');
+  const [selectedServo, setSelectedServo] = useState(0);
   const [endpoint, setEndpoint] = useState('192.168.4.1:81');
   const [connection, setConnection] = useState<ConnectionState>('disconnected');
   const [connectionDetail, setConnectionDetail] = useState('ESP32 not connected');
@@ -404,8 +412,14 @@ export default function Home() {
     () => JOINT_META.find((meta) => meta.key === selectedJoint) ?? JOINT_META[0],
     [selectedJoint],
   );
-  const selectedConfig = servoConfigs[selectedJoint];
-  const selectedBounds = logicalBounds(selectedConfig);
+  const selectedConfig = servoConfigs[selectedServo] ?? makeInitialServoConfig()[0];
+  const selectedServoAssignment = selectedConfig.joint
+    ? JOINT_META.find((meta) => meta.key === selectedConfig.joint) ?? null
+    : null;
+  const mappedServoForSelectedJoint = servoConfigs.find((servo) => servo.joint === selectedJoint) ?? null;
+  const selectedBounds = mappedServoForSelectedJoint
+    ? logicalBounds(mappedServoForSelectedJoint)
+    : { min: -90, max: 90 };
 
   useEffect(() => {
     setHttpsWarning(window.location.protocol === 'https:');
@@ -450,20 +464,26 @@ export default function Home() {
     });
   }, []);
 
-  const applyRemoteConfig = useCallback((payload: any) => {
+  const applyRemoteServos = useCallback((payload: any) => {
     if (!Array.isArray(payload)) return;
     setServoConfigs((current) => {
-      const next = { ...current };
+      const next = current.map((servo) => ({ ...servo }));
       payload.forEach((item) => {
-        const meta = JOINT_META.find((entry) => entry.key === item?.joint);
-        if (!meta) return;
-        const direction = Number(item.direction) === -1 ? -1 : 1;
-        next[meta.key] = {
-          channel: Number(item.channel),
+        const channel = Number(item?.channel);
+        if (!Number.isInteger(channel) || channel < 0 || channel > 15) return;
+        const joint = JOINT_META.some((entry) => entry.key === item?.joint)
+          ? (item.joint as JointKey)
+          : null;
+        next[channel] = {
+          channel,
           min: Number(item.min),
           max: Number(item.max),
           center: Number(item.center),
-          direction,
+          direction: Number(item.direction) === -1 ? -1 : 1,
+          joint,
+          physicalAngle: Number.isFinite(Number(item.physicalAngle))
+            ? Number(item.physicalAngle)
+            : next[channel]?.physicalAngle ?? Number(item.center),
         };
       });
       return next;
@@ -505,7 +525,7 @@ export default function Home() {
         const message = JSON.parse(String(event.data));
         if (message.type === 'snapshot') {
           applyRemoteAngles(message.angles);
-          applyRemoteConfig(message.config);
+          applyRemoteServos(message.servos);
           if (typeof message.outputsEnabled === 'boolean') setOutputsEnabled(message.outputsEnabled);
           if (Number.isFinite(Number(message.gaitSpeed))) setGaitSpeed(Number(message.gaitSpeed));
           setNotice('Robot configuration synchronized from ESP32.');
@@ -534,7 +554,7 @@ export default function Home() {
         setConnectionDetail('ESP32 disconnected');
       }
     };
-  }, [applyRemoteAngles, applyRemoteConfig, disconnect, endpoint]);
+  }, [applyRemoteAngles, applyRemoteServos, disconnect, endpoint]);
 
   useEffect(() => disconnect, [disconnect]);
 
@@ -566,64 +586,72 @@ export default function Home() {
       setMotion('stop');
       send({ type: 'motion', command: 'stop' });
     }
-    const bounds = logicalBounds(servoConfigs[joint]);
+    const mappedServo = servoConfigs.find((servo) => servo.joint === joint);
+    const bounds = mappedServo ? logicalBounds(mappedServo) : { min: -90, max: 90 };
     const bounded = Math.min(bounds.max, Math.max(bounds.min, value));
     setAngles((current) => ({ ...current, [joint]: bounded }));
     send({ type: 'joint', joint, angle: bounded });
   };
 
   const updateSelectedServoConfig = (patch: Partial<ServoConfig>) => {
-    setServoConfigs((current) => ({
-      ...current,
-      [selectedJoint]: { ...current[selectedJoint], ...patch },
-    }));
+    setServoConfigs((current) =>
+      current.map((servo) => (servo.channel === selectedServo ? { ...servo, ...patch } : servo)),
+    );
   };
 
-  const saveSelectedServoConfig = () => {
-    const config = servoConfigs[selectedJoint];
+  const jogSelectedServo = (physicalAngle: number) => {
+    const bounded = Math.min(selectedConfig.max, Math.max(selectedConfig.min, physicalAngle));
+    updateSelectedServoConfig({ physicalAngle: bounded });
+    const ok = send({ type: 'servo_jog', channel: selectedServo, angle: bounded });
+    if (!ok) setNotice('Connect the ESP32 before jogging a physical servo.');
+  };
+
+  const saveSelectedServoCalibration = () => {
+    const config = selectedConfig;
     if (
-      config.channel < -1 ||
-      config.channel > 15 ||
       config.min < 0 ||
       config.max > 180 ||
       config.min >= config.max ||
       config.center <= config.min ||
       config.center >= config.max
     ) {
-      setNotice('Invalid servo configuration. Channel must be -1..15 and min < center < max within 0..180°.');
+      setNotice('Invalid calibration. Use 0–180° and keep min < center < max.');
       return;
     }
     const ok = send({
-      type: 'config_set',
-      joint: selectedJoint,
-      channel: config.channel,
+      type: 'servo_config_set',
+      channel: selectedServo,
       min: config.min,
       max: config.max,
       center: config.center,
       direction: config.direction,
     });
-    setNotice(ok ? selectedMeta.label + ' mapping sent to ESP32.' : 'Saved locally. Connect the ESP32 to push this mapping.');
+    setNotice(
+      ok
+        ? 'Servo ' + selectedServo + ' calibration saved to the ESP32.'
+        : 'Calibration is only local until the ESP32 is connected.',
+    );
   };
 
-  const syncAllServoConfig = () => {
-    let sent = 0;
-    JOINT_META.forEach((meta) => {
-      const config = servoConfigs[meta.key];
-      if (
-        send({
-          type: 'config_set',
-          joint: meta.key,
-          channel: config.channel,
-          min: config.min,
-          max: config.max,
-          center: config.center,
-          direction: config.direction,
-        })
-      ) {
-        sent += 1;
-      }
-    });
-    setNotice(sent ? 'Sent all 12 servo mappings to ESP32.' : 'Connect the ESP32 before pushing servo mappings.');
+  const assignSelectedServo = (joint: JointKey | null) => {
+    setServoConfigs((current) =>
+      current.map((servo) => {
+        if (servo.channel === selectedServo) return { ...servo, joint };
+        if (joint && servo.joint === joint) return { ...servo, joint: null };
+        return servo;
+      }),
+    );
+    const ok = send({ type: 'servo_assign', channel: selectedServo, joint: joint ?? '' });
+    const target = joint ? JOINT_META.find((meta) => meta.key === joint)?.label ?? joint : 'unassigned';
+    setNotice(
+      ok
+        ? 'Servo ' + selectedServo + ' assigned to ' + target + '.'
+        : 'Assignment is only local until the ESP32 is connected.',
+    );
+  };
+
+  const centerSelectedServo = () => {
+    jogSelectedServo(selectedConfig.center);
   };
 
   const setMotionCommand = (command: MotionCommand) => {
@@ -740,12 +768,41 @@ export default function Home() {
 
           <section className="side-section">
             <div className="section-heading">
-              <div><Settings2 size={17} /><h3>Servo mapping</h3></div>
-              <span>PCA9685</span>
+              <div><Settings2 size={17} /><h3>Servo calibration & assignment</h3></div>
+              <span>SERVO FIRST</span>
             </div>
-            <p className="section-help">Assign the selected logical joint to a physical servo channel, bound its safe travel, and reverse its direction if needed.</p>
+            <p className="section-help">
+              Select a physical PCA9685 servo, calibrate its safe travel, then choose which robot joint it controls.
+              Assigning a joint here automatically removes that joint from any other servo.
+            </p>
+
+            <label className="stack-field">
+              <span>Physical servo</span>
+              <select value={selectedServo} onChange={(event) => setSelectedServo(Number(event.target.value))}>
+                {servoConfigs.map((servo) => {
+                  const assignment = servo.joint
+                    ? JOINT_META.find((meta) => meta.key === servo.joint)?.short ?? servo.joint
+                    : 'unassigned';
+                  return <option key={servo.channel} value={servo.channel}>Servo {servo.channel} · {assignment}</option>;
+                })}
+              </select>
+            </label>
+
+            <div className="servo-status">
+              <div>
+                <span>Selected</span>
+                <strong>Servo {selectedServo}</strong>
+              </div>
+              <div>
+                <span>Assigned joint</span>
+                <strong>{selectedServoAssignment?.label ?? 'Unassigned'}</strong>
+              </div>
+            </div>
+
             <div className="servo-grid">
-              <NumericField label="Channel" value={selectedConfig.channel} min={-1} max={15} onChange={(value) => updateSelectedServoConfig({ channel: value })} />
+              <NumericField label="Min" value={selectedConfig.min} min={0} max={180} unit="°" onChange={(value) => updateSelectedServoConfig({ min: value })} />
+              <NumericField label="Center" value={selectedConfig.center} min={0} max={180} unit="°" onChange={(value) => updateSelectedServoConfig({ center: value })} />
+              <NumericField label="Max" value={selectedConfig.max} min={0} max={180} unit="°" onChange={(value) => updateSelectedServoConfig({ max: value })} />
               <label className="numeric-field">
                 <span>Direction</span>
                 <div>
@@ -758,13 +815,63 @@ export default function Home() {
                   </select>
                 </div>
               </label>
-              <NumericField label="Min" value={selectedConfig.min} min={0} max={180} unit="°" onChange={(value) => updateSelectedServoConfig({ min: value })} />
-              <NumericField label="Center" value={selectedConfig.center} min={0} max={180} unit="°" onChange={(value) => updateSelectedServoConfig({ center: value })} />
-              <NumericField label="Max" value={selectedConfig.max} min={0} max={180} unit="°" onChange={(value) => updateSelectedServoConfig({ max: value })} />
             </div>
+
+            <div className="calibration-jog">
+              <div className="angle-readout">
+                <strong>{selectedConfig.physicalAngle.toFixed(1)}°</strong>
+                <span>physical servo angle</span>
+              </div>
+              <input
+                className="joint-slider"
+                aria-label={'Servo ' + selectedServo + ' physical calibration angle'}
+                type="range"
+                min={selectedConfig.min}
+                max={selectedConfig.max}
+                step="1"
+                value={Math.min(selectedConfig.max, Math.max(selectedConfig.min, selectedConfig.physicalAngle))}
+                onChange={(event) => jogSelectedServo(Number(event.target.value))}
+              />
+              <div className="range-labels">
+                <span>{selectedConfig.min}°</span>
+                <span>{selectedConfig.max}°</span>
+              </div>
+            </div>
+
             <div className="button-row">
-              <button className="primary-button" onClick={saveSelectedServoConfig}><Save size={15} /> Save joint</button>
-              <button className="secondary-button" onClick={syncAllServoConfig}>Push all 12</button>
+              <button className="primary-button" onClick={saveSelectedServoCalibration}><Save size={15} /> Save calibration</button>
+              <button className="secondary-button" onClick={centerSelectedServo}>Go to center</button>
+            </div>
+
+            <label className="stack-field assignment-field">
+              <span>Assign servo {selectedServo} to joint</span>
+              <select
+                value={selectedConfig.joint ?? ''}
+                onChange={(event) => assignSelectedServo(event.target.value ? event.target.value as JointKey : null)}
+              >
+                <option value="">Unassigned</option>
+                {JOINT_META.map((meta) => <option key={meta.key} value={meta.key}>{meta.label}</option>)}
+              </select>
+            </label>
+
+            <div className="assignment-map">
+              {JOINT_META.map((meta) => {
+                const servo = servoConfigs.find((item) => item.joint === meta.key);
+                return (
+                  <button
+                    key={meta.key}
+                    className={servo?.channel === selectedServo ? 'active' : ''}
+                    onClick={() => {
+                      setSelectedJoint(meta.key);
+                      if (servo) setSelectedServo(servo.channel);
+                    }}
+                    title={servo ? 'Select servo ' + servo.channel : 'No servo assigned'}
+                  >
+                    <span>{meta.short}</span>
+                    <strong>{servo ? 'S' + servo.channel : '—'}</strong>
+                  </button>
+                );
+              })}
             </div>
           </section>
 

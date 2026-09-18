@@ -289,3 +289,66 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .header-actions .ghost-button { display: none; }
   .statusbar { display: none; }
 }
+
+
+/* Servo-first calibration workflow */
+.servo-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+.servo-status > div {
+  border: 1px solid #2d3e47;
+  border-radius: 8px;
+  background: #141e24;
+  padding: 9px 10px;
+  display: grid;
+  gap: 4px;
+}
+.servo-status span {
+  color: #6f838f;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.servo-status strong {
+  color: #dce5ea;
+  font-size: 11px;
+  font-weight: 650;
+}
+.calibration-jog {
+  margin-top: 12px;
+  border-top: 1px solid #25343c;
+  padding-top: 2px;
+}
+.assignment-field { margin-top: 14px; }
+.assignment-map {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.assignment-map button {
+  min-height: 42px;
+  border: 1px solid #2d3f49;
+  border-radius: 7px;
+  background: #141e24;
+  color: #80939e;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 9px;
+}
+.assignment-map button strong {
+  color: #c7d3d9;
+  font-size: 11px;
+}
+.assignment-map button.active {
+  border-color: #6b8e4f;
+  background: #1c2b18;
+  color: var(--green);
+}
+.assignment-map button.active strong { color: var(--green); }
