@@ -38,7 +38,7 @@ export function defaults() {
     servos: Array.from({ length: 16 }, (_, channel) => ({
       channel,
       joint: channel < 12 ? channel : -1,
-      enabled: channel < 12,
+      enabled: true,
       calibrated: false,
       direction: 1,
       center: 90,
@@ -129,7 +129,7 @@ export function validateConfig(c) {
   return errors;
 }
 export function servoForJoint(c, j) {
-  return c.servos.find((s) => s.enabled && s.joint === j);
+  return c.servos.find((s) => s.joint === j);
 }
 export function physicalAngle(s, jointAngle) {
   return clamp(
@@ -169,7 +169,8 @@ export function baseAngle(i) {
 }
 export function footPosition(g, i, angles) {
   const l = g.legs[i],
-    a = baseAngle(i) - rad(angles[0]),
+    yawSign = i % 2 === 0 ? -1 : 1,
+    a = baseAngle(i) + yawSign * rad(angles[0]),
     h = rad(angles[1]),
     k = rad(angles[2]),
     r = l.coxa + l.femur * Math.cos(h) + l.tibia * Math.cos(h + k),
@@ -203,9 +204,10 @@ export function solveLeg(g, i, p) {
   const h =
     Math.atan2(p.y, r) -
     Math.atan2(l.tibia * Math.sin(k), l.femur + l.tibia * Math.cos(k));
-  let yaw = deg(baseAngle(i) - Math.atan2(z, x));
-  yaw = ((yaw + 540) % 360) - 180;
-  return [yaw, deg(h), deg(k)];
+  const yawSign = i % 2 === 0 ? -1 : 1;
+  let delta = Math.atan2(z, x) - baseAngle(i);
+  delta = ((delta + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  return [deg(delta / yawSign), deg(h), deg(k)];
 }
 /** One swing leg at a time (80% stance). Local frame only; no odometry implied. */
 export function gaitPose(c, time, direction, ramp = 1) {
@@ -238,7 +240,7 @@ export function validateGait(c, direction) {
     for (let j = 0; j < 12; j++) {
       const s = servoForJoint(c, j);
       if (!s || !s.calibrated)
-        return "All 12 joints need an enabled, calibrated servo";
+        return "All 12 joints need an assigned, calibrated servo";
     }
     for (let n = 0; n < 80; n++) {
       const pose = gaitPose(c, (n * c.gait.period) / 80, direction);

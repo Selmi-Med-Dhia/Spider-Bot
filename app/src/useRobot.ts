@@ -24,7 +24,7 @@ export function useRobot() {
   const setMessage = useCallback((message: string) => connection.current!.update({ message }), []);
   useEffect(() => {
     const timer = setInterval(() => connection.current!.tick(document.visibilityState === "visible"), 250);
-    const stop = () => { send("disarm"); };
+    const stop = () => { send("stop"); };
     const hidden = () => { if (document.visibilityState !== "visible") stop(); };
     window.addEventListener("blur", stop);
     document.addEventListener("visibilitychange", hidden);

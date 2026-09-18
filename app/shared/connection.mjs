@@ -24,9 +24,9 @@ export class RobotConnection {
     this.socket.send(JSON.stringify(command));
     return true;
   }
-  disconnect(message = 'Disconnected — outputs disabled') {
+  disconnect(message = 'Disconnected') {
     clearTimeout(this.timer);
-    this.send('disarm');
+    this.send('stop');
     const ws = this.socket;
     this.socket = null;
     ws?.close();
@@ -66,7 +66,7 @@ export class RobotConnection {
           }
           if (this.snapshot.connecting && this.snapshot.config && this.snapshot.state) {
             clearTimeout(this.timer);
-            this.update({ connecting: false, message: 'SpiderBot connected — outputs disabled until you enable them' });
+            this.update({ connecting: false, message: 'SpiderBot connected — all servo outputs are live' });
           }
         } catch {
           this.disconnect('Invalid robot response. Flash the firmware from this branch and reconnect.');
@@ -86,6 +86,6 @@ export class RobotConnection {
   tick(visible = true) {
     if (visible) this.send('heartbeat');
     if (!this.snapshot.connecting && this.lastState && Date.now() - this.lastState > 1500)
-      this.disconnect('Robot stopped responding — outputs disabled. Rejoin SpiderBot Wi-Fi and reconnect.');
+      this.disconnect('Robot stopped responding. Rejoin SpiderBot Wi-Fi and reconnect.');
   }
 }

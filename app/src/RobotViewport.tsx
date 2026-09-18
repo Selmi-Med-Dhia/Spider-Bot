@@ -251,7 +251,8 @@ export default function Viewport({
       const left = i % 2 === 0,
         front = i < 2;
       const signX = left ? -1 : 1,
-        signZ = front ? 1 : -1;
+        signZ = front ? 1 : -1,
+        yawSign = left ? -1 : 1;
       const base = new THREE.Group();
       base.position.set(
         (signX * config.width) / 2 + leg.offsetX,
@@ -260,7 +261,8 @@ export default function Viewport({
       );
       body.add(base);
       base.rotation.y =
-        -Math.atan2(signZ * 0.8, signX) + THREE.MathUtils.degToRad(leg.yaw);
+        -Math.atan2(signZ * 0.8, signX) -
+        yawSign * THREE.MathUtils.degToRad(leg.yaw);
       joint(base, true);
       const active = selected === -1 || selected === i;
       const color = active ? 0xc8ef7b : 0x718894;
@@ -290,9 +292,10 @@ export default function Viewport({
     if (!r?.articulations) return;
     for (const { base, shoulder, knee, i } of r.articulations) {
       const l = config.legs[i];
+      const yawSign = i % 2 === 0 ? -1 : 1;
       base.rotation.y =
-        -Math.atan2(i < 2 ? 0.8 : -0.8, i % 2 === 0 ? -1 : 1) +
-        THREE.MathUtils.degToRad(l.yaw);
+        -Math.atan2(i < 2 ? 0.8 : -0.8, i % 2 === 0 ? -1 : 1) -
+        yawSign * THREE.MathUtils.degToRad(l.yaw);
       shoulder.rotation.z = THREE.MathUtils.degToRad(l.hip);
       knee.rotation.z = THREE.MathUtils.degToRad(l.knee);
     }

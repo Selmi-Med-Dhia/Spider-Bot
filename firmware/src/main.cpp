@@ -75,22 +75,28 @@ void sendState() {
 // writes block the network loop.
 void controlTask(void *) {
   TickType_t last = xTaskGetTickCount();
-  uint32_t previous = millis();
+  uint32_t previous = millis(), lastPwmRetry = 0;
+  uint8_t consecutivePwmFailures = 0;
   for (;;) {
     const uint32_t now = millis();
     lock();
     robot.tick(now, (uint32_t)(now - previous) / 1000.f);
     previous = now;
-    if (!robot.armed || !hardwareReady)
+
+    if (!hardwareReady) {
       digitalWrite(SERVO_OE_PIN, HIGH);
-    if (robot.armed && hardwareReady) {
+      if ((uint32_t)(now - lastPwmRetry) >= 1000) {
+        lastPwmRetry = now;
+        hardwareReady = pwm.begin();
+        if (hardwareReady) {
+          pwm.setPWMFreq(50);
+          robot.fault = "";
+          consecutivePwmFailures = 0;
+        }
+      }
+    } else {
       bool ok = true;
       for (int i = 0; i < 16; i++) {
-        if (!robot.active[i]) {
-          if (pwm.setPWM(i, 0, 4096) != 0)
-            ok = false;
-          continue;
-        }
         const auto &s = robot.config.servos[i];
         float us =
             s.pulseMin + (s.pulseMax - s.pulseMin) * robot.angles[i] / 180.f;
@@ -98,13 +104,17 @@ void controlTask(void *) {
         if (pwm.setPWM(i, 0, ticks) != 0)
           ok = false;
       }
-      if (ok)
+      if (ok) {
+        consecutivePwmFailures = 0;
         digitalWrite(SERVO_OE_PIN, LOW);
-      else {
+      } else {
         digitalWrite(SERVO_OE_PIN, HIGH);
-        robot.disarm();
-        hardwareReady = false;
-        robot.fault = "PCA9685 I2C write failed; check wiring and reboot";
+        if (++consecutivePwmFailures >= 3) {
+          consecutivePwmFailures = 0;
+          hardwareReady = false;
+          robot.fault =
+              "PCA9685 I2C write failed; outputs paused while retrying";
+        }
       }
     }
     unlock();
@@ -128,7 +138,7 @@ void handleMessage(uint8_t *data, size_t size) {
   String type = doc["type"].as<String>();
   bool ok = false;
   const char *why =
-      "Command rejected: check armed channels, calibration and limits";
+      "Command rejected: check channel, calibration and configured limits";
   if (type == "getConfig") {
     sendConfig();
     return;
@@ -137,13 +147,6 @@ void handleMessage(uint8_t *data, size_t size) {
     Config next;
     if (!readConfig(doc["config"], next)) {
       reply(id, false, "Invalid configuration; no changes applied");
-      return;
-    }
-    lock();
-    bool armed = robot.armed;
-    unlock();
-    if (armed) {
-      reply(id, false, "Disarm before changing configuration");
       return;
     }
     DynamicJsonDocument saved(16384);
@@ -155,7 +158,7 @@ void handleMessage(uint8_t *data, size_t size) {
       return;
     }
     lock();
-    robot.apply(next);
+    robot.apply(next, false);
     configRevision++;
     unlock();
     reply(id, true);
@@ -168,8 +171,7 @@ void handleMessage(uint8_t *data, size_t size) {
     lastClientHeartbeat = millis();
     ok = true;
   } else if (type == "disarm") {
-    robot.disarm();
-    digitalWrite(SERVO_OE_PIN, HIGH);
+    robot.disarm(); // compatibility: stop motion, keep outputs live
     ok = true;
   } else if (type == "stop") {
     robot.stop();
@@ -199,10 +201,9 @@ void handleMessage(uint8_t *data, size_t size) {
   if (type != "heartbeat")
     reply(id, ok, ok ? "" : why);
 }
-void disableOutputs() {
+void stopMotion() {
   lock();
-  robot.disarm();
-  digitalWrite(SERVO_OE_PIN, HIGH);
+  robot.stop();
   unlock();
 }
 void onSocket(uint8_t client, WStype_t type, uint8_t *payload, size_t length) {
@@ -218,8 +219,8 @@ void onSocket(uint8_t client, WStype_t type, uint8_t *payload, size_t length) {
     controllerClient = client;
     lastClientHeartbeat = millis();
     wsConnected = true;
-    disableOutputs();
-    Serial.println("App connected; outputs disabled");
+    stopMotion();
+    Serial.println("App connected; all servo outputs live");
     sendConfig();
     sendState();
     break;
@@ -228,8 +229,8 @@ void onSocket(uint8_t client, WStype_t type, uint8_t *payload, size_t length) {
       return;
     controllerClient = -1;
     wsConnected = false;
-    disableOutputs();
-    Serial.println("App disconnected; outputs disabled");
+    stopMotion();
+    Serial.println("App disconnected; holding current servo positions");
     break;
   case WStype_TEXT:
     if (controllerClient == client)
@@ -278,7 +279,7 @@ void setup() {
   socket.onEvent(onSocket);
   Serial.println("Join Wi-Fi: SpiderBot (no password)");
   Serial.println("In the local app choose Real robot, then Connect.");
-  Serial.println("Robot address: ws://192.168.4.1:81/ — outputs DISABLED");
+  Serial.println("Robot address: ws://192.168.4.1:81/ — all outputs LIVE");
 }
 void loop() {
   static uint32_t lastState = 0;
@@ -286,7 +287,7 @@ void loop() {
   uint32_t now = millis();
   // Free a vanished controller even if TCP has not noticed the Wi-Fi loss yet.
   if (wsConnected && (uint32_t)(now - lastClientHeartbeat) > 1500) {
-    disableOutputs();
+    stopMotion();
     socket.disconnect((uint8_t)controllerClient);
     controllerClient = -1;
     wsConnected = false;

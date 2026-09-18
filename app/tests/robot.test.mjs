@@ -15,6 +15,7 @@ import {
 test("configuration rejects duplicate assignments and invalid limits, pulses and geometry", () => {
   const c = defaults();
   assert.deepEqual(validateConfig(c), []);
+  assert.ok(c.servos.every((servo) => servo.enabled));
   for (const change of [
     (x) => (x.servos[1].joint = 0),
     (x) => (x.servos[0].min = 150),
@@ -34,12 +35,19 @@ test("direction and reference mapping round trip, with physical bounds enforced"
   assert.equal(physicalAngle(s, 500), s.min);
   assert.equal(physicalAngle(s, -500), s.max);
 });
-test("FK and IK agree on all four mirrored legs", () => {
+test("FK and IK agree and left/right yaw is truly mirrored", () => {
   const g = defaults().geometry;
+  const q = [12, 35, -105];
   for (let i = 0; i < 4; i++) {
-    const q = [12, 35, -105],
-      actual = solveLeg(g, i, footPosition(g, i, q));
+    const actual = solveLeg(g, i, footPosition(g, i, q));
     actual.forEach((a, j) => assert.ok(Math.abs(a - q[j]) < 1e-8));
+  }
+  for (const [left, right] of [[0, 1], [2, 3]]) {
+    const a = footPosition(g, left, q);
+    const b = footPosition(g, right, q);
+    assert.ok(Math.abs(a.x + b.x) < 1e-8);
+    assert.ok(Math.abs(a.y - b.y) < 1e-8);
+    assert.ok(Math.abs(a.z - b.z) < 1e-8);
   }
   assert.throws(
     () => solveLeg(g, 0, { x: 1000, y: 1000, z: 1000 }),

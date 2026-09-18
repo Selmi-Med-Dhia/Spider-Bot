@@ -38,7 +38,7 @@ inline bool readConfig(JsonVariantConst v, Config &c) {
     s.channel = x["channel"];
     s.joint = x["joint"];
     s.direction = x["direction"];
-    s.enabled = x["enabled"];
+    s.enabled = true; // legacy field accepted; all channels stay live
     s.calibrated = x["calibrated"];
     RF(x, "center", s.center);
     RF(x, "reference", s.reference);
@@ -78,7 +78,7 @@ inline void writeConfig(JsonObject o, const Config &c) {
     x["channel"] = s.channel;
     x["joint"] = s.joint;
     x["direction"] = s.direction;
-    x["enabled"] = s.enabled;
+    x["enabled"] = true; // schema-v1 compatibility
     x["calibrated"] = s.calibrated;
     x["center"] = s.center;
     x["reference"] = s.reference;

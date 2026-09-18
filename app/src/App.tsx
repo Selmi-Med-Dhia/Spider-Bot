@@ -10,10 +10,8 @@ import {
   RotateCw,
   Square,
   Plug,
-  ShieldOff,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Viewport from "./RobotViewport";
 import { useRobot } from "./useRobot";
@@ -123,8 +121,7 @@ export default function App() {
     [grid, setGrid] = useState(true),
     [axes, setAxes] = useState(false),
     [view, setView] = useState("Perspective"),
-    [revision, setRevision] = useState(0),
-    [supported, setSupported] = useState(false);
+    [revision, setRevision] = useState(0);
   const [simAngles, setSimAngles] = useState<number[]>(() =>
       draft.servos.map((s) => s.center),
     ),
@@ -144,7 +141,7 @@ export default function App() {
   const dirty = robot.config
     ? JSON.stringify(draft) !== JSON.stringify(robot.config)
     : false;
-  const currentConfig = !preview && robot.config ? robot.config : draft;
+  const currentConfig = draft;
   if (robot.state) lastPhysical.current = robot.state.angles;
   const physical = preview ? simAngles : lastPhysical.current;
   const targets = preview
@@ -159,17 +156,12 @@ export default function App() {
     robot.online &&
     !!robot.config &&
     !!robot.state &&
-    robot.state.hardwareReady &&
-    !dirty &&
-    !errors.length;
-  const mayMove = preview || !!(liveReady && robot.state?.armed);
-  const mayDrive = preview || !!(mayMove && robot.state?.active.length === 12);
-  const configLocked = !preview && (!!robot.state?.armed || !robot.config);
+    robot.state.hardwareReady;
+  const mayMove = preview || liveReady;
+  const mayDrive = preview || (liveReady && !dirty && !errors.length);
+  const configLocked = false;
   useEffect(() => {
-    if (robot.config) {
-      setDraft(robot.config);
-      setSupported(false);
-    }
+    if (robot.config) setDraft(robot.config);
   }, [robot.config]);
   useEffect(() => {
     if (!errors.length)
@@ -219,16 +211,14 @@ export default function App() {
     }, 50);
     return () => clearInterval(interval);
   }, [preview]);
-  const stop = () => {
+  const cancelDrive = () => {
     sim.current.drive = "";
     sim.current.targets = [...sim.current.angles];
     setDrive("");
-    if (!preview) robot.send("stop");
   };
-  const disarm = () => {
-    stop();
-    if (!preview) robot.send("disarm");
-    setSupported(false);
+  const stop = () => {
+    cancelDrive();
+    if (!preview) robot.send("stop");
   };
   useEffect(() => {
     const release = () => {
@@ -238,11 +228,7 @@ export default function App() {
       robot.send("stop");
     };
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        release();
-        robot.send("disarm");
-        setSupported(false);
-      }
+      if (e.key === "Escape") release();
     };
     window.addEventListener("blur", release);
     const pointerUp = () => {
@@ -265,9 +251,6 @@ export default function App() {
     );
     return () => clearInterval(interval);
   }, [drive, preview, robot.send]);
-  useEffect(() => {
-    if (!preview && !robot.state?.armed) setDrive("");
-  }, [robot.state?.armed, preview]);
   const beginDrive = (direction: string) => {
     if (!mayDrive) return;
     const c = preview
@@ -287,23 +270,35 @@ export default function App() {
   };
   const moveServo = (angle: number) => {
     if (!mayMove) return;
-    stop();
+    cancelDrive();
     if (preview)
       sim.current.targets[channel] = clamp(angle, selected.min, selected.max);
     else robot.send("servo", { channel, angle });
   };
   const moveJoint = (joint: number, angle: number) => {
     if (!mayMove) return;
-    stop();
+    cancelDrive();
     if (preview) {
       const s = servoForJoint(draft, joint);
       if (s) sim.current.targets[s.channel] = physicalAngle(s, angle);
-    } else robot.send("joint", { joint, angle });
+    } else {
+      robot.send("servo", { channel, angle: physicalAngle(selected, angle) });
+    }
   };
   const updateServo = (patch: Partial<ServoConfig>) =>
     setDraft((c) => ({
       ...c,
       servos: c.servos.map((s, i) => (i === channel ? { ...s, ...patch } : s)),
+    }));
+  const assignJoint = (joint: number) =>
+    setDraft((c) => ({
+      ...c,
+      servos: c.servos.map((s, i) => {
+        if (i === channel) return { ...s, joint, calibrated: false };
+        if (joint >= 0 && s.joint === joint)
+          return { ...s, joint: -1, calibrated: false };
+        return s;
+      }),
     }));
   const setGeometry = (key: string, value: number) =>
     setDraft((c) => ({ ...c, geometry: { ...c.geometry, [key]: value } }));
@@ -361,7 +356,7 @@ export default function App() {
           <button
             className={preview ? "active" : ""}
             onClick={() => {
-              disarm();
+              stop();
               robot.disconnect();
               setPreview(true);
             }}
@@ -378,8 +373,8 @@ export default function App() {
             Real robot
           </button>
         </div>
-        <button className="emergency" onClick={disarm}>
-          <ShieldOff size={17} /> DISABLE OUTPUTS <kbd>Esc</kbd>
+        <button className="emergency" onClick={stop}>
+          <Square size={17} /> STOP MOTION <kbd>Esc</kbd>
         </button>
       </header>
       <div className="workspace">
@@ -422,7 +417,7 @@ export default function App() {
           <div
             className={
               "connection-badge " +
-              (!preview && robot.state?.armed ? "armed" : "")
+              (!preview && robot.online ? "armed" : "")
             }
           >
             {preview
@@ -431,9 +426,9 @@ export default function App() {
                 ? "ESP32 offline"
                 : !robot.state
                   ? "Telemetry stale"
-                  : robot.state.armed
-                    ? "Outputs enabled"
-                    : "Outputs disabled"}
+                  : robot.state.hardwareReady
+                    ? "All servo outputs live"
+                    : "Servo controller unavailable"}
           </div>
           <div className="motion-dock">
             <div className="dock-label">
@@ -523,7 +518,7 @@ export default function App() {
                 </button>
               </div>
               <p>
-                Robot: 192.168.4.1 · Stay connected if Wi-Fi says “No internet”.
+                Robot: 192.168.4.1 · All 16 servo outputs stay live while powered.
               </p>
               {robot.state && (
                 <small>
@@ -585,11 +580,7 @@ export default function App() {
                   min={selected.min}
                   max={selected.max}
                   unit="°"
-                  disabled={
-                    !mayMove ||
-                    !selected.enabled ||
-                    (!preview && !robot.state?.active.includes(channel))
-                  }
+                  disabled={!mayMove}
                   onChange={moveServo}
                 />
                 {selected.joint >= 0 && (
@@ -599,10 +590,7 @@ export default function App() {
                     min={-180}
                     max={180}
                     unit="°"
-                    disabled={
-                      !mayMove ||
-                      (!preview && !robot.state?.active.includes(channel))
-                    }
+                    disabled={!mayMove}
                     onChange={(v) => moveJoint(selected.joint, v)}
                   />
                 )}
@@ -618,56 +606,10 @@ export default function App() {
                   Move to standing pose
                 </button>
               </section>
-              {!preview && (
-                <section className="control-section">
-                  <div className="section-title">
-                    <span>03</span>
-                    <h3>Output enable</h3>
-                  </div>
-                  <label className="check-row">
-                    <input
-                      type="checkbox"
-                      checked={supported}
-                      onChange={(e) => setSupported(e.target.checked)}
-                    />{" "}
-                    Robot supported; servos clear to move
-                  </label>
-                  <p className="selection-note">
-                    Enabling starts at the stored center angles. Calibrate one
-                    channel at a time before enabling all joints.
-                  </p>
-                  <div className="button-stack">
-                    <button
-                      className="primary"
-                      disabled={
-                        !liveReady ||
-                        !supported ||
-                        !selected.enabled ||
-                        robot.state?.armed
-                      }
-                      onClick={() => robot.send("arm", { channel })}
-                    >
-                      Enable channel {channel} only
-                    </button>
-                    <button
-                      disabled={
-                        !liveReady ||
-                        !supported ||
-                        robot.state?.armed ||
-                        draft.servos.filter(
-                          (s) => s.enabled && s.calibrated && s.joint >= 0,
-                        ).length !== 12
-                      }
-                      onClick={() => robot.send("arm", { channel: -1 })}
-                    >
-                      Enable all 12 calibrated joints
-                    </button>
-                  </div>
-                </section>
-              )}
+
               <section className="control-section">
                 <div className="section-title">
-                  <span>04</span>
+                  <span>03</span>
                   <h3>Walking parameters</h3>
                 </div>
                 {(["stride", "lift", "period", "turn"] as const).map((k, i) => (
@@ -711,9 +653,7 @@ export default function App() {
                   <select
                     aria-label="Assigned joint"
                     value={selected.joint}
-                    onChange={(e) =>
-                      updateServo({ joint: +e.target.value, calibrated: false })
-                    }
+                    onChange={(e) => assignJoint(+e.target.value)}
                   >
                     <option value={-1}>Unassigned</option>
                     {JOINT_NAMES.map((name, j) => (
@@ -739,14 +679,7 @@ export default function App() {
                     <option value={-1}>−1 · reversed</option>
                   </select>
                 </label>
-                <label className="toggle-row">
-                  <span>Channel enabled</span>
-                  <Switch
-                    aria-label="Channel enabled"
-                    checked={selected.enabled}
-                    onCheckedChange={(v) => updateServo({ enabled: v })}
-                  />
-                </label>
+
                 {(
                   [
                     "min",
@@ -791,8 +724,8 @@ export default function App() {
                 </label>
               </fieldset>
               <p className="selection-note">
-                Servo = center + direction × (joint − reference). Disarm before
-                editing. Duplicate joint assignments are rejected.
+                Servo = center + direction × (joint − reference). Assigning a
+                joint automatically unassigns it from its previous channel.
               </p>
             </section>
           )}
@@ -881,7 +814,9 @@ export default function App() {
             )}
             <button
               className="primary wide-button"
-              disabled={configLocked || !!errors.length || (!preview && !dirty)}
+              disabled={
+                !!errors.length || (!preview && (!dirty || !robot.online))
+              }
               onClick={apply}
             >
               {preview ? "Save preview configuration" : "Apply & save to ESP32"}

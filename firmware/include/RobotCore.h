@@ -38,7 +38,7 @@ inline Config defaults() {
     auto &s = c.servos[i];
     s.channel = i;
     s.joint = i < Joints ? i : -1;
-    s.enabled = i < Joints;
+    s.enabled = true;
     s.reference = i % 3 == 0 ? 0 : i % 3 == 1 ? 25 : -95;
   }
   return c;
@@ -80,7 +80,7 @@ inline bool validConfig(const Config &c) {
 }
 inline int channelFor(const Config &c, int j) {
   for (int i = 0; i < Channels; i++)
-    if (c.servos[i].enabled && c.servos[i].joint == j)
+    if (c.servos[i].joint == j)
       return i;
   return -1;
 }
@@ -103,7 +103,8 @@ inline float baseAngle(int i) {
 inline Point footPosition(const Geometry &g, int i, const float *a) {
   const auto &l = g.legs[i];
   const auto m = mount(g, i);
-  float t = baseAngle(i) - rad(a[0]), h = rad(a[1]), k = rad(a[2]),
+  float yawSign = i % 2 == 0 ? -1.f : 1.f,
+        t = baseAngle(i) + yawSign * rad(a[0]), h = rad(a[1]), k = rad(a[2]),
         r = l.coxa + l.femur * std::cos(h) + l.tibia * std::cos(h + k);
   return {m.x + r * std::cos(t),
           l.femur * std::sin(h) + l.tibia * std::sin(h + k),
@@ -122,8 +123,10 @@ inline bool solveLeg(const Geometry &g, int i, Point p, float *out) {
                              -1, 1)),
         h = std::atan2(p.y, r) -
             std::atan2(l.tibia * std::sin(k), l.femur + l.tibia * std::cos(k));
-  float yaw = deg(baseAngle(i) - std::atan2(z, x));
-  out[0] = std::fmod(yaw + 540, 360) - 180;
+  float yawSign = i % 2 == 0 ? -1.f : 1.f,
+        delta = std::atan2(z, x) - baseAngle(i);
+  delta = std::fmod(delta + 3 * Pi, 2 * Pi) - Pi;
+  out[0] = deg(delta / yawSign);
   out[1] = deg(h);
   out[2] = deg(k);
   return true;
@@ -182,17 +185,25 @@ inline bool gaitReady(const Config &c, int direction) {
 struct Controller {
   Config config = defaults();
   float angles[Channels] = {}, targets[Channels] = {};
+  // Kept for protocol-v1 telemetry compatibility. Every channel is always live.
   bool active[Channels] = {};
-  bool armed = false;
+  bool armed = true;
   int direction = -1;
   uint32_t driveStart = 0, lastDrive = 0, lastHeartbeat = 0;
   const char *fault = "";
   Controller() { apply(config); }
-  void apply(const Config &c) {
+  void apply(const Config &c, bool resetAngles = true) {
     config = c;
-    disarm();
-    for (int i = 0; i < Channels; i++)
-      angles[i] = targets[i] = c.servos[i].center;
+    direction = -1;
+    for (int i = 0; i < Channels; i++) {
+      active[i] = true;
+      if (resetAngles)
+        angles[i] = c.servos[i].center;
+      else
+        angles[i] = clamp(angles[i], c.servos[i].min, c.servos[i].max);
+      targets[i] = angles[i];
+    }
+    armed = true;
     fault = "";
   }
   void stop() {
@@ -200,37 +211,26 @@ struct Controller {
     for (int i = 0; i < Channels; i++)
       targets[i] = angles[i];
   }
+  // Legacy "disarm" now means stop motion; it never releases servo outputs.
   void disarm() {
     stop();
-    armed = false;
+    armed = true;
     for (auto &v : active)
-      v = false;
+      v = true;
   }
+  // Legacy arm selection is accepted but all channels remain active.
   bool arm(int channel, uint32_t now) {
     if (channel < -1 || channel >= Channels)
       return false;
-    if (channel >= 0 && !config.servos[channel].enabled)
-      return false;
-    if (channel == -1)
-      for (int j = 0; j < Joints; j++) {
-        int i = channelFor(config, j);
-        if (i < 0 || !config.servos[i].calibrated)
-          return false;
-      }
-    disarm();
-    for (int i = 0; i < Channels; i++) {
-      active[i] = channel < 0 ? (config.servos[i].enabled &&
-                                 config.servos[i].joint >= 0)
-                              : i == channel;
-      targets[i] = angles[i];
-    }
+    for (auto &v : active)
+      v = true;
     armed = true;
     lastHeartbeat = now;
     fault = "";
     return true;
   }
   bool servo(int i, float angle) {
-    if (!armed || i < 0 || i >= Channels || !active[i] || !range(angle, 0, 180))
+    if (i < 0 || i >= Channels || !range(angle, 0, 180))
       return false;
     stop();
     targets[i] = clamp(angle, config.servos[i].min, config.servos[i].max);
@@ -245,11 +245,9 @@ struct Controller {
     return servo(i, clamp(rawAngle(config.servos[i], a), 0, 180));
   }
   bool allActive() const {
-    for (int j = 0; j < Joints; j++) {
-      int i = channelFor(config, j);
-      if (i < 0 || !active[i])
+    for (int j = 0; j < Joints; j++)
+      if (channelFor(config, j) < 0)
         return false;
-    }
     return true;
   }
   bool pose(const float *p) {
@@ -262,7 +260,7 @@ struct Controller {
     return true;
   }
   bool home() {
-    if (!armed || !allActive())
+    if (!allActive())
       return false;
     float p[Joints];
     if (!gaitPose(config, 0, 0, 0, p) || !withinBounds(config, p))
@@ -271,7 +269,7 @@ struct Controller {
     return pose(p);
   }
   bool drive(int d, uint32_t now) {
-    if (!armed || !allActive() || d < 0 || d > 3)
+    if (!allActive() || d < 0 || d > 3)
       return false;
     if (direction != d) {
       if (!gaitReady(config, d))
@@ -283,13 +281,6 @@ struct Controller {
     return true;
   }
   void tick(uint32_t now, float dt) {
-    if (!armed)
-      return;
-    if (uint32_t(now - lastHeartbeat) > 1000) {
-      disarm();
-      fault = "Controller heartbeat timeout";
-      return;
-    }
     if (direction >= 0 && uint32_t(now - lastDrive) > 400)
       stop();
     if (direction >= 0) {
@@ -301,13 +292,12 @@ struct Controller {
       }
     }
     dt = clamp(dt, 0, .05f);
-    for (int i = 0; i < Channels; i++)
-      if (active[i]) {
-        float step = config.servos[i].speed * dt;
-        angles[i] =
-            clamp(angles[i] + clamp(targets[i] - angles[i], -step, step),
-                  config.servos[i].min, config.servos[i].max);
-      }
+    for (int i = 0; i < Channels; i++) {
+      float step = config.servos[i].speed * dt;
+      angles[i] =
+          clamp(angles[i] + clamp(targets[i] - angles[i], -step, step),
+                config.servos[i].min, config.servos[i].max);
+    }
   }
 };
 } // namespace spider

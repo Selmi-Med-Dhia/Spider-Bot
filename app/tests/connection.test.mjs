@@ -39,7 +39,7 @@ async function setup(t, respond = true, timeout = 6000) {
   client.connect();
   return {client, messages, requests, peers};
 }
-test('direct connection loads config/telemetry without cookies or token, sends commands, disarms and reconnects without replay', async t => {
+test('direct connection loads config/telemetry without cookies or token, sends commands, stops and reconnects without replay', async t => {
   const {client,messages,requests} = await setup(t);
   await waitFor(() => client.snapshot.online && !client.snapshot.connecting);
   assert.equal(requests[0].url, '/');
@@ -51,21 +51,21 @@ test('direct connection loads config/telemetry without cookies or token, sends c
   client.tick();
   await waitFor(() => messages.some(m => m.type === 'servo' && m.angle === 115));
   client.disconnect();
-  await waitFor(() => messages.some(m => m.type === 'disarm'));
+  await waitFor(() => messages.some(m => m.type === 'stop'));
   assert.equal(client.snapshot.state, null);
   const prior = messages.length;
   client.connect();
   await waitFor(() => client.snapshot.online);
   assert.ok(messages.slice(prior).every(m => !['arm','drive','servo'].includes(m.type)));
 });
-test('stale telemetry clears motion state and sends disarm', async t => {
+test('stale telemetry clears motion state and sends stop', async t => {
   const {client,messages} = await setup(t);
   await waitFor(() => client.snapshot.online);
   client.lastState = Date.now() - 1600;
   client.tick();
   assert.equal(client.snapshot.online, false);
   assert.equal(client.snapshot.state, null);
-  await waitFor(() => messages.some(m => m.type === 'disarm'));
+  await waitFor(() => messages.some(m => m.type === 'stop'));
 });
 test('silent endpoint times out with actionable Wi-Fi instructions', async t => {
   const {client} = await setup(t, false, 100);
