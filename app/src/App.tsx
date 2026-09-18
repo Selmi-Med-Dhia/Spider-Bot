@@ -12,6 +12,7 @@ import {
   Plug,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Viewport from "./RobotViewport";
 import { useRobot } from "./useRobot";
@@ -875,7 +876,7 @@ export default function App() {
         <span>
           {preview
             ? "No hardware commands"
-            : "1000 ms heartbeat timeout · output disable on connection loss"}{" "}
+            : "1500 ms controller timeout · servos hold position on connection loss"}{" "}
           · Y up
         </span>
       </footer>
