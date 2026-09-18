@@ -2,6 +2,7 @@ name: Verify SpiderBot
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
