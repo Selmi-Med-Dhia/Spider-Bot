@@ -22,7 +22,7 @@ export function validateCheckpoint(checkpoint) {
 export function validateMovement(movement) {
   if (!movement || typeof movement !== "object") return "Movement object required";
   if (typeof movement.id !== "string" || !movement.id.trim()) return "Movement id required";
-  if (typeof movement.name !== "string" || !movement.name.trim()) return "Movement name required";
+  if (typeof movement.name !== "string") return "Movement name required";
   if (!Array.isArray(movement.checkpoints)) return "Movement checkpoints required";
   for (const checkpoint of movement.checkpoints) {
     const error = validateCheckpoint(checkpoint);
@@ -38,7 +38,7 @@ export function parseMovementLibrary(text) {
     if (!Array.isArray(value)) return [];
     return value.filter((movement) => !validateMovement(movement)).map((movement) => ({
       id: movement.id,
-      name: movement.name.trim(),
+      name: movement.name.trim() || "Untitled movement",
       checkpoints: movement.checkpoints.map((checkpoint, index) => ({
         id:
           typeof checkpoint.id === "string" && checkpoint.id.trim()
