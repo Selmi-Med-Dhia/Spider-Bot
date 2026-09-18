@@ -25,6 +25,10 @@ test("movement library accepts complete 16-servo checkpoints and normalizes firs
   assert.equal(parsed[0].checkpoints[0].delayMs, 0);
   assert.equal(parsed[0].checkpoints[1].delayMs, 350);
   assert.deepEqual(parsed[0].checkpoints[1].angles, angles(2));
+  const unnamed = parseMovementLibrary(
+    JSON.stringify([{ ...movement, id: "unnamed", name: "   " }]),
+  );
+  assert.equal(unnamed[0].name, "Untitled movement");
 });
 
 test("playback plan uses each checkpoint delay from the previous checkpoint", () => {
