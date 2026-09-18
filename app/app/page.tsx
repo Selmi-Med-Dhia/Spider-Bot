@@ -90,18 +90,15 @@ function makeInitialAngles(): JointAngles {
 }
 
 function makeInitialServoConfig(): ServoConfigs {
-  return Array.from({ length: 16 }, (_, channel) => {
-    const assigned = JOINT_META[channel] ?? null;
-    return {
-      channel,
-      min: 10,
-      max: 170,
-      center: assigned?.part === 'knee' ? 135 : 90,
-      direction: 1 as const,
-      joint: assigned?.key ?? null,
-      physicalAngle: assigned?.part === 'knee' ? 135 : 90,
-    };
-  });
+  return Array.from({ length: 16 }, (_, channel) => ({
+    channel,
+    min: 10,
+    max: 170,
+    center: 90,
+    direction: 1 as const,
+    joint: null,
+    physicalAngle: 90,
+  }));
 }
 
 function normalizeWebSocketUrl(value: string) {
@@ -404,7 +401,7 @@ export default function Home() {
   const [motion, setMotion] = useState<MotionCommand>('stop');
   const [gaitSpeed, setGaitSpeed] = useState(55);
   const [outputsEnabled, setOutputsEnabled] = useState(false);
-  const [notice, setNotice] = useState('Connect to the ESP32, calibrate one joint at a time, then test walking.');
+  const [notice, setNotice] = useState('Select a physical servo, calibrate it, then assign it to a robot joint.');
   const [httpsWarning, setHttpsWarning] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -600,6 +597,10 @@ export default function Home() {
   };
 
   const jogSelectedServo = (physicalAngle: number) => {
+    if (!outputsEnabled) {
+      setNotice('Enable servo outputs before jogging the selected physical servo.');
+      return;
+    }
     const bounded = Math.min(selectedConfig.max, Math.max(selectedConfig.min, physicalAngle));
     updateSelectedServoConfig({ physicalAngle: bounded });
     const ok = send({ type: 'servo_jog', channel: selectedServo, angle: bounded });
@@ -738,7 +739,7 @@ export default function Home() {
           <section className="side-section">
             <div className="section-heading">
               <div><SlidersHorizontal size={17} /><h3>Manual joint control</h3></div>
-              <span>12 JOINTS</span>
+              <span>{mappedServoForSelectedJoint ? 'SERVO ' + mappedServoForSelectedJoint.channel : 'SIM ONLY'}</span>
             </div>
             <label className="stack-field">
               <span>Joint</span>
