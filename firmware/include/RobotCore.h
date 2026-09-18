@@ -232,7 +232,8 @@ struct Controller {
   bool servo(int i, float angle) {
     if (i < 0 || i >= Channels || !range(angle, 0, 180))
       return false;
-    stop();
+    // Manual commands interrupt gait without cancelling other servo targets.
+    direction = -1;
     targets[i] = clamp(angle, config.servos[i].min, config.servos[i].max);
     return true;
   }

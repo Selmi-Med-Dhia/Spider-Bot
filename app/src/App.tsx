@@ -213,11 +213,11 @@ export default function App() {
   }, [preview]);
   const cancelDrive = () => {
     sim.current.drive = "";
-    sim.current.targets = [...sim.current.angles];
     setDrive("");
   };
   const stop = () => {
     cancelDrive();
+    sim.current.targets = [...sim.current.angles];
     if (!preview) robot.send("stop");
   };
   useEffect(() => {
