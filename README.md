@@ -19,8 +19,9 @@ your computer and click Connect in the local app. The browser talks directly to
 - Four-leg inverse kinematics and an 80% stance crawl for forward, backward,
   clockwise and counterclockwise movement, with adjustable stride, lift, period,
   and turn angle. The body stays centered in the visualization; it is not odometry.
-- Press-and-hold walking controls; release/Stop holds the current commanded pose.
-  Disable outputs/Escape removes PWM output. Loss of control heartbeat also disables output.
+- Press-and-hold walking controls; release/Stop/Escape holds the current commanded pose.
+  All sixteen servo channels stay live while the PCA9685 is healthy; a lost controller stops
+  walking and is disconnected without dropping the held servo outputs.
 - Configuration validation on both sides and persistent ESP32 NVS configuration.
 - Separate offline preview mode, which sends **no hardware commands**.
 
@@ -59,7 +60,7 @@ For development, `pnpm dev` runs the UI on http://localhost:5173.
    asks for local network access, allow it. Settings and live angles load automatically.
 
 No `secrets.h` is needed; old Wi-Fi/token settings are ignored. Hardware pins are
-in `firmware/include/Hardware.h`. See [wiring](firmware/README.md) before enabling servos.
+in `firmware/include/Hardware.h`. See [wiring](firmware/README.md) before moving servos.
 Saved servo calibration is retained when updating firmware normally (without erasing flash).
 
 If connection fails: verify that **SpiderBot** is your active Wi-Fi network, close
@@ -69,23 +70,24 @@ flash this branch's firmware. Use the **local app URL**, not the old hosted demo
 The app reports a connection failure after six seconds instead of waiting forever.
 The ESP32 address is for the app's WebSocket; it is not an HTTP webpage.
 
-### 3. Calibrate, one channel at a time
+### 3. Calibrate and assign channels
 
 1. Support the body so the legs are free to move. Use a suitable separate servo
    power supply and the PCA9685 **OE** wiring in the firmware guide.
-2. In the app choose **Real robot** and **Connect**.
-3. The app downloads the ESP32's saved settings. In **Calibration**, select a channel,
-   set its joint and direction, servo angle limits, center/reference and pulse range.
-   A joint can be assigned to only one channel. To swap assignments, first set one
-   channel to Unassigned, make the swap, and save the final valid configuration.
-4. **Apply & save to ESP32** while outputs are disabled.
-5. In **Control**, check that the robot is supported and choose **Enable channel N only**.
-   Move **Servo angle** in small increments; the simulator follows the commanded joint.
-6. Disable outputs before editing calibration. Once mapping, direction and travel are
-   tested, mark that channel calibrated and save. Repeat for all twelve joints.
-7. Enter measured pivot-to-pivot leg lengths and body geometry in **Geometry**, then save.
-8. **Enable all 12 calibrated joints**, **Move to standing pose**, then test short
-   press-and-hold Forward/Backward/Rotate movements. Start with small stride/lift.
+2. In the app choose **Real robot** and **Connect**. All sixteen servo channels are live;
+   start with conservative limits and keep the robot physically supported.
+3. In **Calibration**, select any PCA9685 channel, assign its joint and direction, then
+   set angle limits, center/reference, pulse range and speed. Assigning a joint to a new
+   channel automatically unassigns it from the previous channel, so remapping is direct.
+4. In **Control**, move **Servo angle** or **Joint angle** in small increments to test the
+   selected channel. You can move another channel immediately; no enable/arm step exists.
+5. Once mapping, direction and travel are tested, mark that channel calibrated and
+   **Apply & save to ESP32**. Saving configuration preserves the current servo positions
+   (clamped only if a newly configured limit requires it).
+6. Repeat for all twelve joints, then enter measured pivot-to-pivot leg lengths and body
+   geometry in **Geometry**.
+7. When all twelve joints are assigned/calibrated, use **Move to standing pose**, then
+   test short press-and-hold Forward/Backward/Rotate movements with small stride/lift.
 
 Changing a servo's mapping, direction or calibration parameters clears its tested
 flag in the app. Firmware rejects walks with missing calibration, unreachable foot
@@ -103,8 +105,8 @@ Front is **+Z**, up is **+Y**. Channel defaults:
 | Rear left | 6 | 7 | 8 |
 | Rear right | 9 | 10 | 11 |
 
-Channels 12–15 start disabled/unassigned and can be reassigned. Defaults are not
-hardware calibration. Default center is 90°, neutral joint references are
+Channels 12–15 start unassigned but are still live and can be assigned to any joint.
+Defaults are not hardware calibration. Default center is 90°, neutral joint references are
 `[0°, 25°, -95°]` and physical limits are 10°–170°.
 
 ```text
@@ -120,17 +122,15 @@ of the travel bounds. Use the range specified for your actual servos.
 
 | Event | Behavior |
 | --- | --- |
-| Release walking control / Stop | Cancel gait; hold current commanded position |
+| Release walking control / Stop / Escape | Cancel gait; hold current commanded position |
 | No renewed drive command for 400 ms | Cancel gait; hold current commanded position |
-| Disable outputs / Escape | Disable PCA9685 outputs through OE |
-| App tab hidden or window loses focus | Send disable command; heartbeat remains independently enforced |
-| No browser heartbeat for 1000 ms | Firmware disables outputs on its independent control task |
-| WebSocket disconnect / reconnect | Disable; explicit enable required again |
-| PCA9685 I²C write error | Disable outputs; fault shown; check wiring and reboot |
+| App tab hidden or window loses focus | Send Stop; held servo targets remain live |
+| No browser heartbeat for 1500 ms | Drop the stale WebSocket controller; hold current servo positions |
+| WebSocket disconnect / reconnect | Stop walking; hold current servo positions; no re-enable step |
+| Repeated PCA9685 I²C write errors | Temporarily raise OE, retry PCA9685 initialization every second, then resume automatically |
 
-Disabling output releases holding torque and can let the robot drop; support it
-during calibration. Software output-disable is not a substitute for a physical
-servo power cutoff. This version intentionally uses an open local Wi-Fi connection
+All servo outputs are intentionally live whenever the PCA9685 is healthy. Support the
+robot during calibration and use a physical servo-power cutoff for emergency isolation. This version intentionally uses an open local Wi-Fi connection
 without authentication. Only one controlling app connection is accepted at a time.
 
 ## Tests
@@ -144,9 +144,10 @@ cd ../firmware
 pio run                    # ESP32 build, no board needed
 ```
 
-The tests cover mapping/direction, bounds and invalid configurations, forward/inverse
-kinematics, gait preflight, command validation, direct token-free connection, reconnect
-behavior, watchdog timing including millis rollover, and 64 matching JS/C++ gait poses.
+The tests cover mapping/direction, bounds and invalid configurations, mirrored
+forward/inverse kinematics, repeated independent servo commands, gait preflight,
+direct token-free connection/reconnect behavior, live configuration preservation,
+and 64 matching JS/C++ gait poses.
 No physical robot is needed for these tests; they do not establish hardware walking
 performance. See [protocol details](app/PROTOCOL.md) and [firmware guide](firmware/README.md).
 

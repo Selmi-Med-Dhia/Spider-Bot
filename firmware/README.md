@@ -22,9 +22,9 @@ and current capacity for the actual servos, including stall current. A physical
 servo-power cutoff is recommended. OE only gates the signal; it does not remove
 servo supply power. Set PCA9685 logic VCC to 3.3 V so I²C pull-ups stay at ESP32 levels.
 
-The OE pin and external pull-up are required for deterministic output disable
-through reset/network loss. An unconnected OE defeats the intended hardware gate.
-Do not tie OE permanently low with this firmware.
+The OE pin and external pull-up provide deterministic signal disable during ESP32
+reset and during PCA9685 fault recovery. An unconnected OE defeats that hardware
+gate. Do not tie OE permanently low with this firmware.
 
 ## Setup
 
@@ -42,9 +42,10 @@ The ESP32 creates open Wi-Fi **SpiderBot**, with no password, at **192.168.4.1**
 Join it from the computer running the local app, choose Real robot and click Connect.
 The browser connects directly to the ESP32 WebSocket server on port **81**.
 There is no router or app bridge. The firmware accepts one controller at a time;
-a second tab receives an error. Boot, disconnect and reconnect leave outputs disabled.
-A missing heartbeat disables outputs after 1000 ms; after 1500 ms the network loop
-also drops the stale client so a new connection can take control.
+a second tab receives an error. All sixteen servo channels are live while the PCA9685
+is healthy. Disconnect/reconnect stops walking but keeps the current servo positions.
+After 1500 ms without a browser heartbeat, the stale client is dropped so another
+controller can connect; a drive command still expires after 400 ms.
 
 Old `secrets.h` files are ignored. Normal firmware updates retain calibration in NVS.
 Serial Monitor should print the Wi-Fi name and robot address at startup.
@@ -59,13 +60,15 @@ Serial Monitor should print the Wi-Fi name and robot address at startup.
 
 The network loop runs separately from a 50 Hz servo-control FreeRTOS task. Network
 processing does not suspend heartbeat/drive timeout handling. A mutex protects
-state, and I²C calls have a 20 ms bus timeout. Config changes are accepted only while
-outputs are disabled. One full validated configuration is stored under NVS namespace
+state, and I²C calls have a 20 ms bus timeout. Validated configuration can be changed
+live; existing servo angles are preserved and clamped only when new limits require it.
+One full validated configuration is stored under NVS namespace
 `spider-q4`, key `config`. It is not written on every servo move.
 
-Servo outputs start at the last software-commanded angles on re-enable, or configured
-centers after boot/config changes. Actual shaft positions are unknown after power or
-PWM loss. Always support the robot and check clearances before enabling.
+Servo targets start at configured centers after boot. Live configuration changes keep
+the current commanded angles instead of snapping back to center. Actual shaft positions
+are unknown after power or PWM loss. Always support the robot and check clearances
+before commanding motion.
 
 ## Calibrating physical hardware
 
