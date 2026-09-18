@@ -1,27 +1,25 @@
 # Spider Q4 wire protocol, version 1
 
 All frames are UTF-8 JSON. Units: millimeters and degrees; Y up, +Z forward.
-The bridge limits payloads to 16 KiB and 100 messages/s per connection.
+Firmware rejects command documents larger than 15000 bytes.
 
 ## Connections
 
-- Browser posts `{ "token": "<pairing token>" }` to `/api/session`. The server
-  issues an HttpOnly, SameSite=Strict session cookie. Browser WebSocket `/control`
-  requires that cookie and an Origin matching the request host.
-- ESP32 WebSocket `/robot` authenticates with `Authorization: Bearer <pairing token>`.
-- One robot and one controlling browser are accepted. A second connection is
-  rejected with HTTP 409, rather than taking over another controller.
-- On robot connection: server sends disarm and getConfig. On controller disconnect:
-  server sends disarm. Neither arm nor drive is ever replayed across reconnects.
-- A browser heartbeat is required every 250 ms. The bridge closes stale controllers
-  after 1000 ms; firmware independently disables at 1000 ms without heartbeat.
-- Browser URL and ESP32 socket use the same local server in production. Vite proxies
-  `/api` and `/control` to port 8787 in development. ESP32 always connects to 8787.
+- ESP32 runs open Wi-Fi `SpiderBot`, fixed IP `192.168.4.1`, and a WebSocket server
+  on port 81. The browser connects directly to `ws://192.168.4.1:81/`.
+- No session endpoint, cookies, Authorization headers or pairing tokens.
+- One controlling browser is accepted. A second receives an error frame and closes.
+- On connection the firmware disables outputs and sends config/state. Browser sends
+  heartbeat and getConfig. Disconnect disables outputs. Motion is never replayed.
+- The browser sends heartbeat every 250 ms while visible. Firmware independently
+  disables outputs after 1000 ms without heartbeat, and drops the client after 1500 ms.
+- The browser clears controls on stale telemetry (1500 ms) or failed setup (6000 ms).
+- Node serves static app files on localhost:8787; it does not relay robot traffic.
 
 ## Commands
 
 Every browser command has `v: 1`, a positive integer `id`, and `type`.
-Internal bridge stop/config requests use `id: 0`.
+
 
 | Type | Additional fields | Behavior |
 | --- | --- | --- |
@@ -46,7 +44,6 @@ A drive stream expires after 400 ms even if heartbeats keep arriving.
 
 ## Responses
 
-- `bridge`: `{type:"bridge", robotOnline:boolean}` from the server.
 - `config`: `{v:1,type:"config",revision:number,config:{schema:1,geometry,servos,gait}}`.
 - `ack` / `error`: `{v:1,type:"ack"|"error",id,message}`. Heartbeats are not acknowledged.
 - `state`: emitted at 20 Hz with `v`, `armed`, `active` (channel numbers), `angles`
@@ -68,4 +65,4 @@ A joint may not be assigned twice, even on a disabled channel.
 
 JS and firmware reject non-finite values, missing arrays, invalid dimensions,
 duplicate joints, invalid directions, inverted bounds/pulses and out-of-range gait
-parameters. Firmware validates again even though the bridge also validates.
+parameters. Both the app and firmware validate commands and configuration.

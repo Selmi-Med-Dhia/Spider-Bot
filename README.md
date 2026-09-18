@@ -2,12 +2,12 @@
 
 Two projects, one robot:
 
-- **[`app/`](app/)** — React/Three.js 3D configurator and a Node.js WebSocket bridge.
+- **[`app/`](app/)** — React/Three.js 3D configurator with direct robot control.
 - **[`firmware/`](firmware/)** — PlatformIO ESP32 firmware for a **PCA9685** servo driver.
 
-The ESP32 connects **outbound** to the app computer over Wi-Fi. The browser connects
-to the same app bridge. Run the app locally on the robot's LAN; the earlier static
-hosted demo cannot host this Node WebSocket bridge.
+The ESP32 creates **SpiderBot** Wi-Fi with **no password**. Join that network on
+your computer and click Connect in the local app. The browser talks directly to
+`ws://192.168.4.1:81/`. No token, router, computer IP, or Wi-Fi credentials to configure.
 
 ## What is implemented
 
@@ -32,59 +32,48 @@ collision avoidance, load sensing or automatic balance compensation.
 
 ## Quick start
 
-### 1. Start the app
+### 1. Install and start the app
 
-Install Node.js **22.13+** (Node.js 24 LTS recommended), then:
+Install [Node.js](https://nodejs.org/) 22.13+ and [pnpm](https://pnpm.io/installation).
+While your computer still has internet, run:
 
 ```sh
 cd app
-npx pnpm@11.25.0 install --frozen-lockfile
-npx pnpm@11.25.0 dev
+pnpm install --frozen-lockfile
+pnpm start
 ```
 
-Open **http://localhost:5173**. The bridge listens on **port 8787** and prints a
-pairing token. A generated token is retained in `app/.robot-token` (git-ignored).
-You can instead supply `SPIDER_TOKEN` in the process environment (16+ characters).
-Do not paste Wi-Fi passwords or the real pairing token into Git.
+`pnpm start` builds and serves the app. Open **http://localhost:8787** and leave the
+terminal running. All app assets are local; internet is not needed after installation.
+For development, `pnpm dev` runs the UI on http://localhost:5173.
 
-For a production local server:
+### 2. Flash and connect
 
-```sh
-npx pnpm@11.25.0 build
-npx pnpm@11.25.0 start
-```
+1. Open **firmware/** in VS Code with PlatformIO and click **Upload**. PlatformIO
+   automatically installs the WebSockets, ArduinoJson and PCA9685 dependencies from
+   `platformio.ini`. Do this while you still have internet for the initial downloads.
+   **Upload the new firmware even if an older version is already on the ESP32.**
+2. On your computer join Wi-Fi **SpiderBot**. **There is no password.** Choose to
+   stay connected if Windows says the network has no internet.
+3. In http://localhost:8787 choose **Real robot**, then **Connect**. If your browser
+   asks for local network access, allow it. Settings and live angles load automatically.
 
-Then open **http://localhost:8787**, or `http://<app-computer-LAN-IP>:8787`
-from another device on the same LAN. Keep the server running. If a firewall blocks
-the ESP32, permit incoming TCP 8787 on the trusted/private network.
+No `secrets.h` is needed; old Wi-Fi/token settings are ignored. Hardware pins are
+in `firmware/include/Hardware.h`. See [wiring](firmware/README.md) before enabling servos.
+Saved servo calibration is retained when updating firmware normally (without erasing flash).
 
-### 2. Wire and flash the ESP32
-
-Follow the [firmware wiring and flashing guide](firmware/README.md).
-Copy `firmware/include/secrets.example.h` to `firmware/include/secrets.h` and set:
-
-- `WIFI_SSID` / `WIFI_PASSWORD`: a 2.4 GHz Wi-Fi network.
-- `APP_HOST`: the app computer's LAN IP, **not** `localhost` and not the ESP32 IP.
-- `APP_PORT`: `8787` by default.
-- `ROBOT_TOKEN`: the token printed by the app bridge.
-
-Open `firmware/` in VS Code with PlatformIO, then Build and Upload. Or:
-
-```sh
-cd firmware
-pio run
-pio run --target upload
-pio device monitor
-```
-
-The firmware boots with all outputs disabled and reconnects to the app automatically.
-Reconnection never automatically re-enables the servos or resumes walking.
+If connection fails: verify that **SpiderBot** is your active Wi-Fi network, close
+other control tabs, and check PlatformIO Serial Monitor at 115200 baud. It should
+print `Join Wi-Fi: SpiderBot (no password)`. If it prints the old bridge message,
+flash this branch's firmware. Use the **local app URL**, not the old hosted demo.
+The app reports a connection failure after six seconds instead of waiting forever.
+The ESP32 address is for the app's WebSocket; it is not an HTTP webpage.
 
 ### 3. Calibrate, one channel at a time
 
 1. Support the body so the legs are free to move. Use a suitable separate servo
    power supply and the PCA9685 **OE** wiring in the firmware guide.
-2. In the app choose **Real robot**, paste the pairing token, and **Connect**.
+2. In the app choose **Real robot** and **Connect**.
 3. The app downloads the ESP32's saved settings. In **Calibration**, select a channel,
    set its joint and direction, servo angle limits, center/reference and pulse range.
    A joint can be assigned to only one channel. To swap assignments, first set one
@@ -141,8 +130,8 @@ of the travel bounds. Use the range specified for your actual servos.
 
 Disabling output releases holding torque and can let the robot drop; support it
 during calibration. Software output-disable is not a substitute for a physical
-servo power cutoff. Do not expose this plain HTTP/WebSocket LAN bridge directly to
-the internet. The token is authentication, not transport encryption.
+servo power cutoff. This version intentionally uses an open local Wi-Fi connection
+without authentication. Only one controlling app connection is accepted at a time.
 
 ## Tests
 
@@ -156,7 +145,7 @@ pio run                    # ESP32 build, no board needed
 ```
 
 The tests cover mapping/direction, bounds and invalid configurations, forward/inverse
-kinematics, gait preflight, command validation, pairing, exclusive control, reconnect
+kinematics, gait preflight, command validation, direct token-free connection, reconnect
 behavior, watchdog timing including millis rollover, and 64 matching JS/C++ gait poses.
 No physical robot is needed for these tests; they do not establish hardware walking
 performance. See [protocol details](app/PROTOCOL.md) and [firmware guide](firmware/README.md).

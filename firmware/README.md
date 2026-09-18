@@ -28,10 +28,9 @@ Do not tie OE permanently low with this firmware.
 
 ## Setup
 
-Copy `include/secrets.example.h` to `include/secrets.h`, then edit Wi-Fi credentials,
-`APP_HOST` (computer LAN IP), `APP_PORT` and the matching app `ROBOT_TOKEN`.
-The secrets file is excluded from Git. A build without secrets uses placeholder
-values and cannot connect; it can still be used to check compilation.
+No Wi-Fi credentials, tokens, or secrets file are needed. Hardware pin settings
+are in `include/Hardware.h`. PlatformIO installs all libraries automatically,
+including `links2004/WebSockets@2.6.1`.
 
 ```sh
 pio run
@@ -39,9 +38,16 @@ pio run --target upload
 pio device monitor
 ```
 
-Both ESP32 and app computer must be on the same reachable LAN. Allow TCP 8787
-through the app computer's private-network firewall. This firmware uses an outbound
-WebSocket at `/robot`; it does not run a web server, access point or Bluetooth device.
+The ESP32 creates open Wi-Fi **SpiderBot**, with no password, at **192.168.4.1**.
+Join it from the computer running the local app, choose Real robot and click Connect.
+The browser connects directly to the ESP32 WebSocket server on port **81**.
+There is no router or app bridge. The firmware accepts one controller at a time;
+a second tab receives an error. Boot, disconnect and reconnect leave outputs disabled.
+A missing heartbeat disables outputs after 1000 ms; after 1500 ms the network loop
+also drops the stale client so a new connection can take control.
+
+Old `secrets.h` files are ignored. Normal firmware updates retain calibration in NVS.
+Serial Monitor should print the Wi-Fi name and robot address at startup.
 
 ## Firmware layout
 
@@ -51,8 +57,8 @@ WebSocket at `/robot`; it does not run a web server, access point or Bluetooth d
 - `include/ConfigJson.h`: complete, validated JSON configuration conversion.
 - `test/core_test.cpp`: native control checks and trajectory fixtures.
 
-The network loop runs separately from a 50 Hz servo-control FreeRTOS task. TCP
-reconnection does not suspend heartbeat/drive timeout handling. A mutex protects
+The network loop runs separately from a 50 Hz servo-control FreeRTOS task. Network
+processing does not suspend heartbeat/drive timeout handling. A mutex protects
 state, and I²C calls have a 20 ms bus timeout. Config changes are accepted only while
 outputs are disabled. One full validated configuration is stored under NVS namespace
 `spider-q4`, key `config`. It is not written on every servo move.

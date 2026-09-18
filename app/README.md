@@ -1,26 +1,24 @@
 # Spiderbot app
 
-See the [repository README](../README.md) for setup, pairing and calibration.
-
 ```sh
-npx pnpm@11.25.0 install --frozen-lockfile
-npx pnpm@11.25.0 dev
+pnpm install --frozen-lockfile
+pnpm start
 ```
 
-This runs the Vite UI on 5173 and Node WebSocket bridge on 8787. The ESP32 connects
-to the app computer's port 8787, not to the browser or the UI development port.
-`pnpm build` creates `dist/`; `pnpm start` serves it and the bridge together on 8787.
+Open http://localhost:8787. Join **SpiderBot** Wi-Fi (no password), choose
+**Real robot**, then **Connect**. Flash the matching firmware first.
+See the [repository README](../README.md) for wiring and calibration.
+
+`pnpm start` builds then serves local assets. `pnpm dev` runs Vite on port 5173.
+No internet is needed after dependencies are installed. No pairing token or bridge.
 
 ## Code map
 
 - `src/App.tsx`: control/calibration/geometry panels and offline preview.
-- `src/RobotViewport.tsx`: Three.js articulation; joint changes do not rebuild meshes.
-- `src/useRobot.ts`: authenticated browser session, telemetry, heartbeat and reconnect state.
-- `shared/robot.mjs`: protocol validation, mapping, FK/IK and preview gait.
-- `server/bridge.mjs`: authenticated WebSocket relay, exclusive control and static hosting.
-- `tests/`: mathematical and WebSocket integration tests.
-- `scripts/test-core.mjs`: compiles the firmware core tests using g++ and verifies JS/C++ parity.
-
-The installed UI catalog and existing dependency lockfile were retained from the
-original app. Hosting-specific server code was replaced with the local bridge,
-because real ESP32 control needs a continuously running WebSocket server.
+- `src/RobotViewport.tsx`: Three.js articulation.
+- `src/useRobot.ts`: React state and visibility/heartbeat handling.
+- `shared/connection.mjs`: direct WebSocket connection, telemetry checks and timeouts.
+- `shared/robot.mjs`: validation, mapping, FK/IK and preview gait.
+- `server/app.mjs`: local static app hosting only.
+- `tests/`: math/protocol and direct WebSocket integration tests.
+- `scripts/test-core.mjs`: native firmware assertions and JS/C++ gait parity.

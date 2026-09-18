@@ -1,19 +1,17 @@
 #include "ConfigJson.h"
+#include "Hardware.h"
 #include <Adafruit_PWMServoDriver.h>
 #include <Arduino.h>
 #include <Preferences.h>
-#include <WebSocketsClient.h>
+#include <WebSocketsServer.h>
 #include <WiFi.h>
 #include <Wire.h>
-#if __has_include("secrets.h")
-#include "secrets.h"
-#else
-#include "secrets.example.h"
-#endif
 
 Controller robot;
 SemaphoreHandle_t mutex;
-WebSocketsClient socket;
+WebSocketsServer socket(81);
+int controllerClient = -1;
+uint32_t lastClientHeartbeat = 0;
 Adafruit_PWMServoDriver pwm(PCA_ADDRESS);
 Preferences prefs;
 bool hardwareReady = false, wsConnected = false;
@@ -23,7 +21,8 @@ void unlock() { xSemaphoreGive(mutex); }
 void sendDoc(JsonDocument &doc) {
   String text;
   serializeJson(doc, text);
-  socket.sendTXT(text);
+  if (controllerClient >= 0)
+    socket.sendTXT((uint8_t)controllerClient, text);
 }
 void reply(uint32_t id, bool ok, const char *message = "") {
   StaticJsonDocument<256> d;
@@ -50,7 +49,7 @@ void sendState() {
   d["v"] = 1;
   d["type"] = "state";
   d["uptime"] = millis();
-  d["rssi"] = WiFi.RSSI();
+  d["rssi"] = 0; // Direct access-point mode; no upstream Wi-Fi RSSI.
   d["configRevision"] = configRevision;
   auto a = d.createNestedArray("angles"), t = d.createNestedArray("targets"),
        active = d.createNestedArray("active");
@@ -166,6 +165,7 @@ void handleMessage(uint8_t *data, size_t size) {
   lock();
   if (type == "heartbeat") {
     robot.lastHeartbeat = millis();
+    lastClientHeartbeat = millis();
     ok = true;
   } else if (type == "disarm") {
     robot.disarm();
@@ -199,30 +199,47 @@ void handleMessage(uint8_t *data, size_t size) {
   if (type != "heartbeat")
     reply(id, ok, ok ? "" : why);
 }
-void onSocket(WStype_t type, uint8_t *payload, size_t length) {
+void disableOutputs() {
+  lock();
+  robot.disarm();
+  digitalWrite(SERVO_OE_PIN, HIGH);
+  unlock();
+}
+void onSocket(uint8_t client, WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
   case WStype_CONNECTED:
+    if (controllerClient >= 0 && controllerClient != client) {
+      socket.sendTXT(client,
+                     "{\"v\":1,\"type\":\"error\",\"message\":\"Robot already "
+                     "connected in another tab. Disconnect it first.\"}");
+      socket.disconnect(client);
+      return;
+    }
+    controllerClient = client;
+    lastClientHeartbeat = millis();
     wsConnected = true;
-    lock();
-    robot.disarm();
-    unlock();
+    disableOutputs();
+    Serial.println("App connected; outputs disabled");
     sendConfig();
     sendState();
     break;
   case WStype_DISCONNECTED:
+    if (controllerClient != client)
+      return;
+    controllerClient = -1;
     wsConnected = false;
-    lock();
-    robot.disarm();
-    digitalWrite(SERVO_OE_PIN, HIGH);
-    unlock();
+    disableOutputs();
+    Serial.println("App disconnected; outputs disabled");
     break;
   case WStype_TEXT:
-    handleMessage(payload, length);
+    if (controllerClient == client)
+      handleMessage(payload, length);
     break;
   default:
     break;
   }
 }
+
 void setup() {
   pinMode(SERVO_OE_PIN, OUTPUT);
   digitalWrite(SERVO_OE_PIN, HIGH);
@@ -250,25 +267,29 @@ void setup() {
     robot.fault = "PCA9685 not detected; check address and wiring";
   xTaskCreatePinnedToCore(controlTask, "servo-control", 4096, nullptr, 3,
                           nullptr, 1);
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  socket.begin(APP_HOST, APP_PORT, "/robot");
-  String auth = String("Authorization: Bearer ") + ROBOT_TOKEN + "\r\n";
-  socket.setExtraHeaders(auth.c_str());
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1),
+                    IPAddress(255, 255, 255, 0));
+  if (!WiFi.softAP("SpiderBot")) {
+    Serial.println("Could not start SpiderBot Wi-Fi; reboot ESP32");
+    return;
+  }
+  socket.begin();
   socket.onEvent(onSocket);
-  socket.setReconnectInterval(2000);
-  Serial.println(
-      "Spider Q4 ready; outputs DISABLED. Waiting for Wi-Fi and app bridge.");
+  Serial.println("Join Wi-Fi: SpiderBot (no password)");
+  Serial.println("In the local app choose Real robot, then Connect.");
+  Serial.println("Robot address: ws://192.168.4.1:81/ — outputs DISABLED");
 }
 void loop() {
-  static uint32_t lastState = 0, lastWifi = 0;
+  static uint32_t lastState = 0;
+  socket.loop();
   uint32_t now = millis();
-  if (WiFi.status() == WL_CONNECTED)
-    socket.loop();
-  else if (now - lastWifi > 10000) {
-    lastWifi = now;
-    WiFi.reconnect();
+  // Free a vanished controller even if TCP has not noticed the Wi-Fi loss yet.
+  if (wsConnected && (uint32_t)(now - lastClientHeartbeat) > 1500) {
+    disableOutputs();
+    socket.disconnect((uint8_t)controllerClient);
+    controllerClient = -1;
+    wsConnected = false;
   }
   if (wsConnected && now - lastState >= 50) {
     lastState = now;

@@ -120,7 +120,6 @@ export default function App() {
     [tab, setTab] = useState("control"),
     [channel, setChannel] = useState(0),
     [leg, setLeg] = useState(0),
-    [token, setToken] = useState(""),
     [grid, setGrid] = useState(true),
     [axes, setAxes] = useState(false),
     [view, setView] = useState("Perspective"),
@@ -504,34 +503,31 @@ export default function App() {
           </div>
           {!preview && (
             <section className="connection-panel">
-              <label className="text-label">
-                Pairing token
-                <input
-                  aria-label="Pairing token"
-                  type="password"
-                  autoComplete="off"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="From the app server terminal"
-                />
-              </label>
+              <p>
+                Join Wi-Fi <strong>SpiderBot</strong> (no password), then connect.
+              </p>
               <div className="button-row">
                 <button
                   className="primary"
-                  disabled={robot.connected || token.length < 16}
-                  onClick={() => robot.connect(token)}
+                  disabled={robot.connected || robot.connecting}
+                  onClick={robot.connect}
                 >
                   <Plug size={14} />
-                  Connect
+                  {robot.connecting ? "Connecting…" : "Connect"}
                 </button>
-                <button disabled={!robot.connected} onClick={robot.disconnect}>
+                <button
+                  disabled={!robot.connected && !robot.connecting}
+                  onClick={robot.disconnect}
+                >
                   Disconnect
                 </button>
               </div>
-              <p>ESP32 connects to this computer on port 8787.</p>
+              <p>
+                Robot: 192.168.4.1 · Stay connected if Wi-Fi says “No internet”.
+              </p>
               {robot.state && (
                 <small>
-                  Wi-Fi {robot.state.rssi} dBm · Config r
+                  Direct Wi-Fi · Config r
                   {robot.state.configRevision}
                 </small>
               )}
