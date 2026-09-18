@@ -10,13 +10,18 @@ import {
   RotateCw,
   Square,
   Plug,
+  Play,
+  Plus,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Viewport from "./RobotViewport";
 import { useRobot } from "./useRobot";
-import type { RobotConfig, ServoConfig } from "./types";
+import type { Movement, RobotConfig, ServoConfig } from "./types";
 import {
   defaults,
   validateConfig,
@@ -29,6 +34,7 @@ import {
   JOINT_NAMES,
   clamp,
 } from "../shared/robot.mjs";
+import { parseMovementLibrary, playbackPlan } from "../shared/movements.mjs";
 
 function NumberField({
   label,
@@ -103,6 +109,8 @@ function NumberField({
   );
 }
 const legNames = ["Front left", "Front right", "Rear left", "Rear right"];
+const movementId = () =>
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 export default function App() {
   const robot = useRobot();
   const [draft, setDraft] = useState<RobotConfig>(() => {
@@ -127,6 +135,15 @@ export default function App() {
       draft.servos.map((s) => s.center),
     ),
     [drive, setDrive] = useState("");
+  const [movements, setMovements] = useState<Movement[]>(() =>
+    parseMovementLibrary(localStorage.getItem("spiderbot.movements.v1")),
+  );
+  const [activeMovementId, setActiveMovementId] = useState("");
+  const [newMovementName, setNewMovementName] = useState("New movement");
+  const [playingMovementId, setPlayingMovementId] = useState("");
+  const [playingCheckpoint, setPlayingCheckpoint] = useState(-1);
+  const playbackTimer = useRef<number | null>(null);
+  const playbackToken = useRef(0);
   const driveRef = useRef(drive);
   driveRef.current = drive;
   const lastPhysical = useRef([...simAngles]);
@@ -161,9 +178,27 @@ export default function App() {
   const mayMove = preview || liveReady;
   const mayDrive = preview || (liveReady && !dirty && !errors.length);
   const configLocked = false;
+  const activeMovement =
+    movements.find((movement) => movement.id === activeMovementId) || null;
   useEffect(() => {
     if (robot.config) setDraft(robot.config);
   }, [robot.config]);
+  useEffect(() => {
+    localStorage.setItem("spiderbot.movements.v1", JSON.stringify(movements));
+    if (!movements.length) {
+      if (activeMovementId) setActiveMovementId("");
+    } else if (!movements.some((movement) => movement.id === activeMovementId)) {
+      setActiveMovementId(movements[0].id);
+    }
+  }, [movements, activeMovementId]);
+  useEffect(
+    () => () => {
+      playbackToken.current++;
+      if (playbackTimer.current !== null)
+        window.clearTimeout(playbackTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     if (!errors.length)
       localStorage.setItem("spiderbot.config.v1", JSON.stringify(draft));
@@ -216,13 +251,201 @@ export default function App() {
     sim.current.drive = "";
     setDrive("");
   };
+  const clearPlayback = () => {
+    playbackToken.current++;
+    if (playbackTimer.current !== null) {
+      window.clearTimeout(playbackTimer.current);
+      playbackTimer.current = null;
+    }
+    setPlayingMovementId("");
+    setPlayingCheckpoint(-1);
+  };
   const stop = () => {
+    clearPlayback();
     cancelDrive();
     sim.current.targets = [...sim.current.angles];
     if (!preview) robot.send("stop");
   };
+  const applyServoPose = (angles: number[]) => {
+    if (angles.length !== 16) {
+      robot.setMessage("Checkpoint is invalid: expected 16 servo angles");
+      return false;
+    }
+    const config = preview ? draftRef.current : robot.config || draftRef.current;
+    for (let i = 0; i < 16; i++) {
+      const angle = angles[i];
+      const servo = config.servos[i];
+      if (
+        !Number.isFinite(angle) ||
+        angle < servo.min ||
+        angle > servo.max
+      ) {
+        robot.setMessage(
+          `Checkpoint channel ${i} is outside the current servo limits`,
+        );
+        return false;
+      }
+    }
+    cancelDrive();
+    if (preview) {
+      sim.current.targets = [...angles];
+      return true;
+    }
+    const sent = robot.send("pose", { angles: [...angles] });
+    if (!sent) robot.setMessage("Could not send checkpoint pose to the robot");
+    return sent;
+  };
+  const createMovement = () => {
+    const name =
+      newMovementName.trim() || `Movement ${movements.length + 1}`;
+    const id = movementId();
+    setMovements((current) => [
+      ...current,
+      { id, name, checkpoints: [] },
+    ]);
+    setActiveMovementId(id);
+    setNewMovementName("New movement");
+  };
+  const renameMovement = (name: string) => {
+    if (!activeMovement) return;
+    setMovements((current) =>
+      current.map((movement) =>
+        movement.id === activeMovement.id
+          ? { ...movement, name }
+          : movement,
+      ),
+    );
+  };
+  const deleteMovement = () => {
+    if (!activeMovement) return;
+    clearPlayback();
+    setMovements((current) =>
+      current.filter((movement) => movement.id !== activeMovement.id),
+    );
+  };
+  const captureCheckpoint = () => {
+    if (!activeMovement) {
+      robot.setMessage("Create a movement before saving checkpoints");
+      return;
+    }
+    if (!targets || targets.length !== 16) {
+      robot.setMessage("Servo targets are not available yet");
+      return;
+    }
+    const checkpoint = {
+      id: movementId(),
+      angles: Array.from(targets, Number),
+      delayMs: activeMovement.checkpoints.length ? 1000 : 0,
+    };
+    setMovements((current) =>
+      current.map((movement) =>
+        movement.id === activeMovement.id
+          ? {
+              ...movement,
+              checkpoints: [...movement.checkpoints, checkpoint],
+            }
+          : movement,
+      ),
+    );
+    robot.setMessage(
+      `Saved checkpoint ${activeMovement.checkpoints.length + 1} with all 16 servo targets`,
+    );
+  };
+  const updateCheckpointDelay = (index: number, delayMs: number) => {
+    if (!activeMovement || index === 0) return;
+    const value = Math.max(0, Math.min(60000, Math.round(delayMs)));
+    setMovements((current) =>
+      current.map((movement) =>
+        movement.id === activeMovement.id
+          ? {
+              ...movement,
+              checkpoints: movement.checkpoints.map((checkpoint, i) =>
+                i === index ? { ...checkpoint, delayMs: value } : checkpoint,
+              ),
+            }
+          : movement,
+      ),
+    );
+  };
+  const deleteCheckpoint = (index: number) => {
+    if (!activeMovement) return;
+    clearPlayback();
+    setMovements((current) =>
+      current.map((movement) => {
+        if (movement.id !== activeMovement.id) return movement;
+        const checkpoints = movement.checkpoints.filter((_, i) => i !== index);
+        if (checkpoints[0]) checkpoints[0] = { ...checkpoints[0], delayMs: 0 };
+        return { ...movement, checkpoints };
+      }),
+    );
+  };
+  const reorderCheckpoint = (index: number, delta: number) => {
+    if (!activeMovement) return;
+    const destination = index + delta;
+    if (destination < 0 || destination >= activeMovement.checkpoints.length)
+      return;
+    clearPlayback();
+    setMovements((current) =>
+      current.map((movement) => {
+        if (movement.id !== activeMovement.id) return movement;
+        const checkpoints = [...movement.checkpoints];
+        const [checkpoint] = checkpoints.splice(index, 1);
+        checkpoints.splice(destination, 0, checkpoint);
+        checkpoints[0] = { ...checkpoints[0], delayMs: 0 };
+        return { ...movement, checkpoints };
+      }),
+    );
+  };
+  const runMovement = (movement: Movement) => {
+    if (!mayMove) {
+      robot.setMessage("Connect to the robot before running a movement");
+      return;
+    }
+    if (!movement.checkpoints.length) {
+      robot.setMessage("This movement has no checkpoints yet");
+      return;
+    }
+    let plan: ReturnType<typeof playbackPlan>;
+    try {
+      plan = playbackPlan(movement);
+    } catch (error) {
+      robot.setMessage((error as Error).message);
+      return;
+    }
+    clearPlayback();
+    cancelDrive();
+    const token = ++playbackToken.current;
+    setPlayingMovementId(movement.id);
+    const applyStep = (index: number) => {
+      if (playbackToken.current !== token) return;
+      const step = plan[index];
+      setPlayingCheckpoint(index);
+      if (!applyServoPose(step.angles)) {
+        clearPlayback();
+        return;
+      }
+      if (index + 1 >= plan.length) {
+        playbackTimer.current = null;
+        setPlayingMovementId("");
+        return;
+      }
+      const delay = plan[index + 1].atMs - step.atMs;
+      playbackTimer.current = window.setTimeout(
+        () => applyStep(index + 1),
+        delay,
+      );
+    };
+    applyStep(0);
+  };
   useEffect(() => {
     const release = () => {
+      playbackToken.current++;
+      if (playbackTimer.current !== null) {
+        window.clearTimeout(playbackTimer.current);
+        playbackTimer.current = null;
+      }
+      setPlayingMovementId("");
+      setPlayingCheckpoint(-1);
       sim.current.drive = "";
       sim.current.targets = [...sim.current.angles];
       setDrive("");
@@ -254,6 +477,7 @@ export default function App() {
   }, [drive, preview, robot.send]);
   const beginDrive = (direction: string) => {
     if (!mayDrive) return;
+    clearPlayback();
     const c = preview
       ? {
           ...draft,
@@ -271,6 +495,7 @@ export default function App() {
   };
   const moveServo = (angle: number) => {
     if (!mayMove) return;
+    clearPlayback();
     cancelDrive();
     if (preview)
       sim.current.targets[channel] = clamp(angle, selected.min, selected.max);
@@ -278,6 +503,7 @@ export default function App() {
   };
   const moveJoint = (joint: number, angle: number) => {
     if (!mayMove) return;
+    clearPlayback();
     cancelDrive();
     if (preview) {
       const s = servoForJoint(draft, joint);
@@ -535,6 +761,7 @@ export default function App() {
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="config-tabs">
               <TabsTrigger value="control">Control</TabsTrigger>
+              <TabsTrigger value="movements">Movements</TabsTrigger>
               <TabsTrigger value="calibration">Calibration</TabsTrigger>
               <TabsTrigger value="geometry">Geometry</TabsTrigger>
             </TabsList>
@@ -729,6 +956,201 @@ export default function App() {
                 joint automatically unassigns it from its previous channel.
               </p>
             </section>
+          )}
+          {tab === "movements" && (
+            <>
+              <section className="control-section">
+                <div className="section-title">
+                  <span>02</span>
+                  <h3>Movement library</h3>
+                  <span>{movements.length}</span>
+                </div>
+                <label className="text-label">
+                  New movement
+                  <div className="movement-create">
+                    <input
+                      aria-label="New movement name"
+                      value={newMovementName}
+                      onChange={(e) => setNewMovementName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createMovement();
+                      }}
+                    />
+                    <button
+                      className="primary"
+                      onClick={createMovement}
+                      aria-label="Create movement"
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                </label>
+                {movements.length > 0 && (
+                  <>
+                    <label className="text-label">
+                      Movement
+                      <select
+                        aria-label="Movement"
+                        value={activeMovementId}
+                        onChange={(e) => {
+                          clearPlayback();
+                          setActiveMovementId(e.target.value);
+                        }}
+                      >
+                        {movements.map((movement) => (
+                          <option key={movement.id} value={movement.id}>
+                            {movement.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {activeMovement && (
+                      <label className="text-label">
+                        Name
+                        <input
+                          aria-label="Movement name"
+                          value={activeMovement.name}
+                          onChange={(e) => renameMovement(e.target.value)}
+                        />
+                      </label>
+                    )}
+                    <button
+                      className="wide-button movement-delete"
+                      onClick={deleteMovement}
+                      disabled={!activeMovement}
+                    >
+                      <Trash2 size={14} />
+                      Delete movement
+                    </button>
+                  </>
+                )}
+              </section>
+              <section className="control-section">
+                <div className="section-title">
+                  <span>03</span>
+                  <h3>Checkpoints</h3>
+                  <span>{activeMovement?.checkpoints.length || 0}</span>
+                </div>
+                <button
+                  className="primary wide-button"
+                  disabled={!activeMovement || !mayMove}
+                  onClick={captureCheckpoint}
+                >
+                  <Plus size={14} />
+                  Save current 16-servo position
+                </button>
+                <p className="selection-note">
+                  A checkpoint stores all 16 commanded servo targets together.
+                  The first checkpoint runs immediately; each later delay is
+                  measured from the previous checkpoint.
+                </p>
+                {activeMovement?.checkpoints.length ? (
+                  <div className="checkpoint-list">
+                    {activeMovement.checkpoints.map((checkpoint, index) => (
+                      <div
+                        className={
+                          "checkpoint-card " +
+                          (playingMovementId === activeMovement.id &&
+                          playingCheckpoint === index
+                            ? "playing"
+                            : "")
+                        }
+                        key={checkpoint.id}
+                      >
+                        <div className="checkpoint-head">
+                          <strong>Checkpoint {index + 1}</strong>
+                          <span>
+                            {checkpoint.angles
+                              .slice(0, 4)
+                              .map((angle) => Math.round(angle))
+                              .join(" / ")}
+                            {checkpoint.angles.length > 4 ? " / …" : ""}°
+                          </span>
+                        </div>
+                        <label className="checkpoint-delay">
+                          Delay from previous
+                          <div>
+                            <input
+                              aria-label={`Checkpoint ${index + 1} delay`}
+                              type="number"
+                              min={0}
+                              max={60000}
+                              step={50}
+                              disabled={index === 0}
+                              value={index === 0 ? 0 : checkpoint.delayMs}
+                              onChange={(e) =>
+                                updateCheckpointDelay(
+                                  index,
+                                  Number(e.target.value),
+                                )
+                              }
+                            />
+                            <span>ms</span>
+                          </div>
+                        </label>
+                        <div className="checkpoint-actions">
+                          <button
+                            aria-label={`Apply checkpoint ${index + 1}`}
+                            disabled={!mayMove}
+                            onClick={() => {
+                              clearPlayback();
+                              applyServoPose(checkpoint.angles);
+                            }}
+                          >
+                            <Play size={13} />
+                            Go
+                          </button>
+                          <button
+                            aria-label={`Move checkpoint ${index + 1} up`}
+                            disabled={index === 0}
+                            onClick={() => reorderCheckpoint(index, -1)}
+                          >
+                            <ChevronUp size={14} />
+                          </button>
+                          <button
+                            aria-label={`Move checkpoint ${index + 1} down`}
+                            disabled={
+                              index === activeMovement.checkpoints.length - 1
+                            }
+                            onClick={() => reorderCheckpoint(index, 1)}
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+                          <button
+                            aria-label={`Delete checkpoint ${index + 1}`}
+                            onClick={() => deleteCheckpoint(index)}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="selection-note">
+                    Move the servos with the Control tab, then save the pose
+                    here. Repeat for every step of the movement.
+                  </p>
+                )}
+                <div className="button-row movement-playback">
+                  <button
+                    className="primary"
+                    disabled={!activeMovement?.checkpoints.length || !mayMove}
+                    onClick={() => activeMovement && runMovement(activeMovement)}
+                  >
+                    <Play size={14} />
+                    Run movement
+                  </button>
+                  <button
+                    disabled={!playingMovementId}
+                    onClick={stop}
+                  >
+                    <Square size={13} />
+                    Stop
+                  </button>
+                </div>
+              </section>
+            </>
           )}
           {tab === "geometry" && (
             <>
