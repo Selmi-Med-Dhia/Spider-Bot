@@ -60,7 +60,11 @@ Serial Monitor should print the Wi-Fi name and robot address at startup.
 
 The network loop runs separately from a 50 Hz servo-control FreeRTOS task. Network
 processing does not suspend heartbeat/drive timeout handling. A mutex protects
-state, and I²C calls have a 20 ms bus timeout. Validated configuration can be changed
+state, and I²C calls have a 20 ms bus timeout.
+The WebSocket `pose` command validates all sixteen physical angles before changing
+any target, then updates all sixteen targets while holding that same controller mutex.
+This is used by saved movement checkpoints so a malformed checkpoint cannot be
+partially applied. Validated configuration can be changed
 live; existing servo angles are preserved and clamped only when new limits require it.
 One full validated configuration is stored under NVS namespace
 `spider-q4`, key `config`. It is not written on every servo move.

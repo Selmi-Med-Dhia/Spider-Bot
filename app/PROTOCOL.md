@@ -30,12 +30,14 @@ Every browser command has `v: 1`, a positive integer `id`, and `type`.
 | `disarm` | none | Legacy compatibility command; same safety behavior as Stop, outputs stay live |
 | `stop` | none | Cancel gait and hold current commanded positions |
 | `servo` | `channel`, `angle: 0..180` | Manual physical angle, clamp to channel min/max |
+| `pose` | `angles: [16 physical angles]` | Validate the complete batch, then atomically update all 16 servo targets |
 | `joint` | `joint: 0..11`, `angle: -180..180` | Apply mapping/direction and physical limits |
 | `home` | none | Rate-limited standing pose; all 12 joints must be assigned |
 | `drive` | `direction: forward/backward/left/right` | Start/renew crawl, refresh every 150 ms |
 
-Manual moves cancel an active gait. Configuration and physical moves use the same
-mapping and limits in firmware. A rejected command does not enable output.
+Manual moves and `pose` batches cancel an active gait. Configuration and physical moves use the same
+mapping and limits in firmware. A `pose` is all-or-nothing: if any angle is invalid or outside its
+configured servo bounds, none of the 16 targets change. A rejected command does not enable output.
 A drive stream expires after 400 ms even if heartbeats keep arriving.
 
 ```json
@@ -71,3 +73,12 @@ A joint may not be assigned twice. The UI automatically moves an assignment betw
 JS and firmware reject non-finite values, missing arrays, invalid dimensions,
 duplicate joints, invalid directions, inverted bounds/pulses and out-of-range gait
 parameters. Both the app and firmware validate commands and configuration.
+
+
+## Saved movements
+
+The browser can save named movements in local storage. Each checkpoint stores all sixteen commanded
+physical servo targets. The first checkpoint is applied immediately; every following checkpoint has a
+configurable delay from the previous checkpoint. Replay sends one atomic `pose` command per checkpoint,
+so all sixteen targets change together in the controller. Servo shafts still respect each channel's
+configured speed while travelling to those targets. Stop/Escape/manual control cancels browser replay.

@@ -282,6 +282,12 @@ export function validateCommand(m) {
         number(m.angle, 0, 180)
         ? ""
         : "Invalid servo target";
+    case "pose":
+      return Array.isArray(m.angles) &&
+        m.angles.length === 16 &&
+        m.angles.every((angle) => number(angle, 0, 180))
+        ? ""
+        : "Invalid servo pose";
     case "joint":
       return Number.isInteger(m.joint) &&
         m.joint >= 0 &&

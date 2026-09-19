@@ -50,6 +50,10 @@ test('direct connection loads config/telemetry without cookies or token, sends c
   assert.equal(client.send('servo', {channel:2, angle:115}), true);
   client.tick();
   await waitFor(() => messages.some(m => m.type === 'servo' && m.angle === 115));
+  assert.equal(client.send('pose', {angles:Array(15).fill(90)}), false);
+  const pose = Array.from({length:16}, (_, i) => 82 + i);
+  assert.equal(client.send('pose', {angles:pose}), true);
+  await waitFor(() => messages.some(m => m.type === 'pose' && m.angles?.[15] === 97));
   client.disconnect();
   await waitFor(() => messages.some(m => m.type === 'stop'));
   assert.equal(client.snapshot.state, null);

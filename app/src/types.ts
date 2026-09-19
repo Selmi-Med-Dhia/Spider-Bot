@@ -51,3 +51,16 @@ export type RobotState = {
   rssi: number;
   configRevision: number;
 };
+
+
+export type MovementCheckpoint = {
+  id: string;
+  angles: number[];
+  delayMs: number;
+};
+
+export type Movement = {
+  id: string;
+  name: string;
+  checkpoints: MovementCheckpoint[];
+};

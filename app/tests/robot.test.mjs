@@ -87,6 +87,33 @@ test("commands reject out-of-range, wrong types and unknown operations", () => {
     validateCommand({ v: 1, id: 1, type: "servo", channel: 15, angle: 180 }),
     "",
   );
+  assert.equal(
+    validateCommand({
+      v: 1,
+      id: 2,
+      type: "pose",
+      angles: Array.from({ length: 16 }, (_, i) => 80 + i),
+    }),
+    "",
+  );
+  assert.match(
+    validateCommand({
+      v: 1,
+      id: 3,
+      type: "pose",
+      angles: Array(15).fill(90),
+    }),
+    /Invalid servo pose/,
+  );
+  assert.match(
+    validateCommand({
+      v: 1,
+      id: 4,
+      type: "pose",
+      angles: [...Array(15).fill(90), 181],
+    }),
+    /Invalid servo pose/,
+  );
 });
 test(
   "browser gait matches compiled firmware on 64 poses",

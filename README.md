@@ -23,6 +23,9 @@ your computer and click Connect in the local app. The browser talks directly to
   All sixteen servo channels stay live while the PCA9685 is healthy; a lost controller stops
   walking and is disconnected without dropping the held servo outputs.
 - Configuration validation on both sides and persistent ESP32 NVS configuration.
+- Named saved movements with ordered checkpoints. Each checkpoint captures all sixteen
+  commanded servo targets, can have a delay from the previous checkpoint, and replays as
+  one atomic controller update for simple poses, standing sequences, or slow scripted motion.
 - Separate offline preview mode, which sends **no hardware commands**.
 
 Ordinary PWM servos do not report position. The displayed movement follows the
@@ -88,6 +91,10 @@ The ESP32 address is for the app's WebSocket; it is not an HTTP webpage.
    geometry in **Geometry**.
 7. When all twelve joints are assigned/calibrated, use **Move to standing pose**, then
    test short press-and-hold Forward/Backward/Rotate movements with small stride/lift.
+8. To record a scripted movement, place the servos with **Control**, open **Movements**,
+   create a movement and save the current position as a checkpoint. Reposition the servos,
+   save more checkpoints, set the delay before each later checkpoint, then press
+   **Run movement**. Saved movements stay in that browser's local storage.
 
 Changing a servo's mapping, direction or calibration parameters clears its tested
 flag in the app. Firmware rejects walks with missing calibration, unreachable foot
@@ -146,6 +153,7 @@ pio run                    # ESP32 build, no board needed
 
 The tests cover mapping/direction, bounds and invalid configurations, mirrored
 forward/inverse kinematics, repeated independent servo commands, gait preflight,
+atomic 16-servo checkpoint application/rejection, movement delay sequencing,
 direct token-free connection/reconnect behavior, live configuration preservation,
 and 64 matching JS/C++ gait poses.
 No physical robot is needed for these tests; they do not establish hardware walking

@@ -1,0 +1,53 @@
+name: Verify SpiderBot
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+
+      - name: Install app dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile native robot core tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Ifirmware/include \
+            firmware/test/core_test.cpp -o /tmp/spiderbot-core-test
+
+      - name: Run app and shared-core tests
+        working-directory: app
+        env:
+          SPIDER_NATIVE_TEST: /tmp/spiderbot-core-test
+        run: pnpm test
+
+      - name: Build web app
+        working-directory: app
+        run: pnpm build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio
+
+      - name: Build ESP32 firmware
+        run: pio run -d firmware
